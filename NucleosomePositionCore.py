@@ -135,7 +135,8 @@ def vanderlick(Energy, mu):
 
 def CreateDNA(dnalength):
     dna601 = 'ACAGGATGTATATATCTGACACGTGCCTGGAGACTAGGGAGTAATCCCCTTGGCGGTTAAAACGCGGGGGACAGCGCGTACGTGCGTTTAAGCGGTGCTAGAGCTGTCTACGACCAATTGAGCGGCCTCGGCACCGGGATTCTCCAG'
-    dna = ''.join(random.choice('ACGT') for x in range((dnalength-len(dna601))/2)) + dna601 +''.join(random.choice('ACGT') for x in range((dnalength-len(dna601))/2))
+    flanklength = (dnalength - len(dna601))//2
+    dna = ''.join(random.choice('ACGT') for x in range(flanklength)) + dna601 +''.join(random.choice('ACGT') for x in range(flanklength))
     dna = CleanSeq(dna)
     return dna
 
@@ -143,7 +144,7 @@ def CalcNucPositions(dna, w, mu, B, period):
     E_n = calcE(dna, w, B, period)
     E = smooth(E_n,10)
     P = vanderlick(E, mu)
-    P = nu.concatenate(  (nu.zeros(math.ceil(w/2.)), P,  nu.zeros(w/2) ) )
+    P = nu.concatenate(  (nu.zeros(math.ceil(w//2)), P,  nu.zeros(w//2) ) )
     N = nu.convolve(P,nu.ones(146), mode = 'same')
 #   print 'Integrated probability', sum(P), ' NLD', dnalength/sum(P)
 #print 'diad',  dna.find('GCGCGTACGTGCGTTTAA'), ', max found at ', P.argmax() , P.argmax() - dna.find('GCGCGTACGTGCGTTTAA')
@@ -157,4 +158,4 @@ period = 10.1
 dna = CreateDNA(2000)
 res = CalcNucPositions(dna, w, mu, B, period)
 #DisplayPlot(res[2])
-SavePlot(res[3], 'E:\\tmp\\numpytest.jpg' ,'position (bp)', 'P', 'Nucleosome occupancy')
+SavePlot(res[3], 'c:\\tmp\\numpytest.jpg' ,'position (bp)', 'P', 'Nucleosome occupancy')
