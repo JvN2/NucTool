@@ -87,12 +87,13 @@ def create_dna(dnalength, dyads601=None):
     return ''.join(dna)
 
 
-def calc_nucleosome_positions(seq, w, mu):
-    folding_energy = calc_folding_energy(seq, w)
+def calc_nucleosome_positions(seq, w, mu, flank_size=1000):
+    flanked_seq = 'c' * flank_size + seq + 'c' * flank_size
+    folding_energy = calc_folding_energy(flanked_seq, w)
     relaxed_folding_energy = moving_average(folding_energy, 10)
     dyad_probability = vanderlick(relaxed_folding_energy, mu)
     nucleosome_occupancy = np.convolve(dyad_probability, np.ones(146), mode='same')
-    return nucleosome_occupancy
+    return nucleosome_occupancy[flank_size:flank_size + len(seq)]
 
 
 def read_fasta(filename, name=None):
@@ -111,32 +112,41 @@ def plot_occupancy(seq, occupancy, filename=''):
     x = np.arange(len(seq))
     # plt.xticks(x, xlabels)
 
-    fig = plt.figure(figsize=(20, 3))
-    plt.tight_layout()
-    plt.ylim((-0.1, 1.1))
-    plt.xlim((0, len(seq) - 1))
-    plt.ylabel(r'occupancy')
-    fig.subplots_adjust(bottom=0.2, top=0.8, left=0.05, right=0.98)
-    title = filename.split(r'/')[-1]
-    plt.text(0, 1.0, title, horizontalalignment='left', verticalalignment='bottom', transform=plt.gca().transAxes)
-    plt.plot(occupancy, color = 'grey')
-    selection = [s.isupper() for s in seq]
-
-    plt.plot(occupancy/selection, color= 'r')
-
-    plt.show()
+    # plt.scatter(np.arange(len(selection))[selection], occupancy[selection], color='r', s=6)
 
 
 if __name__ == '__main__':
     filename = r'data/PHO5.fasta'
+    w = 74
+    mu = -w * 5.5 / 74
     seq = read_fasta(filename)
     flank_size = 1000
-    flanked_seq = 'c' * flank_size + seq.upper() + 'c' * flank_size
-    selection = [s.isupper() for s in flanked_seq]
 
-    w = 74
-    mu = -w*8.5/74
+    p = np.asarray([1, 1, 0.1, 0.1])
+    p /= np.sum(p)
+    mutations = np.arange(120) + 850
+    new_seq = ''.join([np.random.choice(list('atcg'), p=p)
+                       if (i in mutations and s != s.upper())
+                       else s for i, s in enumerate(seq)])
+    print(seq[840:1000])
+    print(new_seq[840:1000])
+
     # dna = create_dna(5000, 1000 + 197 * np.arange(16))
     # dna = create_dna(600, [300])
-    nucleosome_occupancy = calc_nucleosome_positions(flanked_seq, w, mu)
-    plot_occupancy(seq, nucleosome_occupancy[selection], filename)
+
+    fig = plt.figure(figsize=(13, 2))
+    plt.tight_layout()
+    fig.subplots_adjust(bottom=0.2, top=0.8, left=0.05, right=0.98)
+    plt.ylim((0, 1))
+    plt.xlim((0, len(seq) - 1))
+    plt.ylabel(r'Occupancy')
+
+    title = filename.split(r'/')[-1]
+    plt.text(0, 1.0, title, horizontalalignment='left', verticalalignment='bottom', transform=plt.gca().transAxes)
+
+    selection = [b.isupper() for b in seq]
+    plt.fill(np.arange(len(seq)), selection, alpha=0.3)
+    for s, line in zip([seq, new_seq], ['-', '--']):
+        nucleosome_occupancy = calc_nucleosome_positions(s, w, mu)
+        plt.plot(nucleosome_occupancy, color='grey', linestyle=line)
+    plt.show()
