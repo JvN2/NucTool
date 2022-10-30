@@ -115,24 +115,50 @@ def plot_occupancy(seq, occupancy, filename=''):
     # plt.scatter(np.arange(len(selection))[selection], occupancy[selection], color='r', s=6)
 
 
+def plot_dinuc_probs(df):
+    nucleotides = list('ACTG')
+    fig, ax = plt.subplots(nrows=4, ncols=1, figsize=(8, 8), sharex=True)
+    for i, n1 in enumerate(nucleotides):
+        for n2 in nucleotides:
+            if n1 + n2 in ['AA', 'TT', 'TA', 'GC']:
+                color = 'red'
+            else:
+                color = 'grey'
+            ax[i].plot(df.index, df[n1 + n2], label=n1 + n2, color=color)
+            ax[i].legend()
+            ax[i].set_ylim(0, 0.5)
+            # Put a legend to the right of the current axis
+            ax[i].legend(loc='center left', bbox_to_anchor=(1, 0.5))
+
+    plt.show()
+
+
+def modify_sequence(seq, positions, w=147):
+    df = get_probability_nucleosome_folding(w)
+    # plot_dinuc_probs(df)
+    new_seq = seq
+    nucleotides = list('ACGT')
+    for position in positions:
+        for i in df.index:
+            if not seq[position + i].isupper():
+                p = np.asarray([df.at[i, seq[-1].upper() + n] for n in nucleotides])
+                pA= 0.8
+                p = [pA]+3*[(1-pA)/3]
+                new_seq = new_seq[:position + i] + np.random.choice(nucleotides, p=p) + new_seq[position + i + 1:]
+
+        print(seq[position - w // 2:position + w // 2])
+        print(new_seq[position - w // 2:position + w // 2])
+        print()
+    return new_seq
+
+
 if __name__ == '__main__':
     filename = r'data/PHO5.fasta'
-    w = 74
-    mu = -w * 5.5 / 74
+    w = 147
+    mu = -w * 9.0 / 74
+
     seq = read_fasta(filename)
-    flank_size = 1000
-
-    p = np.asarray([1, 1, 0.1, 0.1])
-    p /= np.sum(p)
-    mutations = np.arange(120) + 850
-    new_seq = ''.join([np.random.choice(list('atcg'), p=p)
-                       if (i in mutations and s != s.upper())
-                       else s for i, s in enumerate(seq)])
-    print(seq[840:1000])
-    print(new_seq[840:1000])
-
-    # dna = create_dna(5000, 1000 + 197 * np.arange(16))
-    # dna = create_dna(600, [300])
+    new_seq = modify_sequence(seq, [670, 930], 100)
 
     fig = plt.figure(figsize=(13, 2))
     plt.tight_layout()
@@ -142,11 +168,14 @@ if __name__ == '__main__':
     plt.ylabel(r'Occupancy')
 
     title = filename.split(r'/')[-1]
-    plt.text(0, 1.0, title, horizontalalignment='left', verticalalignment='bottom', transform=plt.gca().transAxes)
+    plt.text(0, 1.0, title, horizontalalignment='left', verticalalignment='bottom',
+             transform=plt.gca().transAxes)
 
     selection = [b.isupper() for b in seq]
     plt.fill(np.arange(len(seq)), selection, alpha=0.3)
     for s, line in zip([seq, new_seq], ['-', '--']):
         nucleosome_occupancy = calc_nucleosome_positions(s, w, mu)
         plt.plot(nucleosome_occupancy, color='grey', linestyle=line)
+    mutations = [0.1 if n1 != n2 else np.nan for n1, n2 in zip(seq, new_seq)]
+    plt.plot(mutations)
     plt.show()
