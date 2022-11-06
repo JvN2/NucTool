@@ -77,14 +77,11 @@ def vanderlick(Energy, mu):
 
 
 def create_dna(dnalength, dyads601=None):
-    dna601 = 'ACAGGATGTATATATCTGACACGTGCCTGGAGACTAGGGAGTAATCCCCTTGGCGGTTAAAACGCGGGGGACAGCGCGTACGTGCGTTTAAGCGGTGCTAGAGCTGTCTACGACCAATTGAGCGGCCTCGGCACCGGGATTCTCCAG'
-    len601 = len(dna601)
-    dna = [random.choice('ACGT') for x in range(dnalength)]
-    dna = ['A'] * dnalength
-    if dyads601 is not None:
-        for d in dyads601:
-            dna[d - len601 // 2: d - len601 // 2 + len601] = list(dna601)
-    return ''.join(dna)
+    seq601 = 'ACAGGATGTATATATCTGACACGTGCCTGGAGACTAGGGAGTAATCCCCTTGGCGGTTAAAACGCGGGGGACAGCGCGTACGTGCGTTTAAGCGGTGCTAGAGCTGTCTACGACCAATTGAGCGGCCTCGGCACCGGGATTCTCCAG'
+    seq = [random.choice('ACGT') for x in range(dnalength)]
+    for dyad in dyads601:
+        seq = insert_seq(seq, seq601, dyad)
+    return ''.join(seq)
 
 
 def calc_nucleosome_positions(seq, w, mu, flank_size=1000):
@@ -133,25 +130,6 @@ def plot_dinuc_probs(df):
     plt.show()
 
 
-def modify_sequence(seq, positions, w=147, mode='a-tract'):
-    df = get_probability_nucleosome_folding(w)
-    # plot_dinuc_probs(df)
-    new_seq = seq
-    nucleotides = list('ACGT')
-    for position in positions:
-        for i in df.index:
-            if not seq[position + i].isupper():
-                p = np.asarray([df.at[i, seq[-1].upper() + n] for n in nucleotides])
-                pA = 0.8
-                p = [pA] + 3 * [(1 - pA) / 3]
-                new_seq = new_seq[:position + i] + np.random.choice(nucleotides, p=p) + new_seq[position + i + 1:]
-
-        print(seq[position - w // 2:position + w // 2])
-        print(new_seq[position - w // 2:position + w // 2])
-        print()
-    return new_seq
-
-
 def create_new_seq(df, power=1):
     nucleotides = list('ACGT')
     seq = [np.random.choice(nucleotides)]
@@ -176,11 +154,14 @@ if __name__ == '__main__':
     w = 147
     mu = -w * 9.0 / 74
     seq = read_fasta(filename)
-    seq601 = 'ACAGGATGTATATATCTGACACGTGCCTGGAGACTAGGGAGTAATCCCCTTGGCGGTTAAAACGCGGGGGACAGCGCGTACGTGCGTTTAAGCGGTGCTAGAGCTGTCTACGACCAATTGAGCGGCCTCGGCACCGGGATTCTCCAG'
+
+    # seq = create_dna(len(seq), 300 + np.arange(10) * 197)
+    # mu = -10
 
     new_seq = seq
     for i in [708, 904]:
-        insert = create_new_seq(get_probability_nucleosome_folding(w, 1.5* 10.1), 10)
+    # for i in []:
+        insert = create_new_seq(get_probability_nucleosome_folding(w, 10.1), -2)
         # pA = 0.6
         # p = [pA] + [(1 - pA) / 3] * 3
         # insert = ''.join(np.random.choice(list('ACGT'), w, p=p))
