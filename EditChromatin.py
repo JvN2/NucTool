@@ -133,7 +133,7 @@ def plot_dinuc_probs(df):
     plt.show()
 
 
-def modify_sequence(seq, positions, w=147):
+def modify_sequence(seq, positions, w=147, mode='a-tract'):
     df = get_probability_nucleosome_folding(w)
     # plot_dinuc_probs(df)
     new_seq = seq
@@ -142,8 +142,8 @@ def modify_sequence(seq, positions, w=147):
         for i in df.index:
             if not seq[position + i].isupper():
                 p = np.asarray([df.at[i, seq[-1].upper() + n] for n in nucleotides])
-                pA= 0.8
-                p = [pA]+3*[(1-pA)/3]
+                pA = 0.8
+                p = [pA] + 3 * [(1 - pA) / 3]
                 new_seq = new_seq[:position + i] + np.random.choice(nucleotides, p=p) + new_seq[position + i + 1:]
 
         print(seq[position - w // 2:position + w // 2])
@@ -152,13 +152,40 @@ def modify_sequence(seq, positions, w=147):
     return new_seq
 
 
+def create_new_seq(df, power=1):
+    nucleotides = list('ACGT')
+    seq = [np.random.choice(nucleotides)]
+    for i, nucleotide_probability in df.iterrows():
+        p = np.asarray(nucleotide_probability[[seq[-1] + b for b in nucleotides]]) ** power
+        seq.append(np.random.choice(nucleotides, p=p / np.sum(p)))
+    return ''.join(seq)
+
+
+def insert_seq(seq, insert, position):
+    new_seq = list(seq)
+    locations = np.arange(len(insert)) - len(insert) // 2 + position
+    for loc, base in zip(locations, insert):
+        if (0 < loc < len(seq) - 1):
+            if new_seq[loc].islower():
+                new_seq[loc] = base
+    return ''.join(new_seq)
+
+
 if __name__ == '__main__':
     filename = r'data/PHO5.fasta'
     w = 147
     mu = -w * 9.0 / 74
-
     seq = read_fasta(filename)
-    new_seq = modify_sequence(seq, [670, 930], 100)
+    seq601 = 'ACAGGATGTATATATCTGACACGTGCCTGGAGACTAGGGAGTAATCCCCTTGGCGGTTAAAACGCGGGGGACAGCGCGTACGTGCGTTTAAGCGGTGCTAGAGCTGTCTACGACCAATTGAGCGGCCTCGGCACCGGGATTCTCCAG'
+
+    new_seq = seq
+    for i in [708, 904]:
+        insert = create_new_seq(get_probability_nucleosome_folding(w, 1.5* 10.1), 10)
+        # pA = 0.6
+        # p = [pA] + [(1 - pA) / 3] * 3
+        # insert = ''.join(np.random.choice(list('ACGT'), w, p=p))
+        print(insert)
+        new_seq = insert_seq(new_seq, insert, i)
 
     fig = plt.figure(figsize=(13, 2))
     plt.tight_layout()
@@ -176,6 +203,6 @@ if __name__ == '__main__':
     for s, line in zip([seq, new_seq], ['-', '--']):
         nucleosome_occupancy = calc_nucleosome_positions(s, w, mu)
         plt.plot(nucleosome_occupancy, color='grey', linestyle=line)
-    mutations = [0.1 if n1 != n2 else np.nan for n1, n2 in zip(seq, new_seq)]
-    plt.plot(mutations)
+    mutations = [1 if n1 != n2 else 0 for n1, n2 in zip(seq, new_seq)]
+    plt.fill(np.arange(len(seq)), mutations, color='red', alpha=0.3)
     plt.show()
