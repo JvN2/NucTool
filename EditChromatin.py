@@ -121,6 +121,7 @@ def plot_dinuc_probs(df):
                 color = 'red'
             else:
                 color = 'grey'
+            # ax[i].plot(df.index, df[n1 + n2]*df[conjugate_strand(n1+n2, False)], label=n1 + n2)#, color=color)
             ax[i].plot(df.index, df[n1 + n2], label=n1 + n2, color=color)
             ax[i].legend()
             ax[i].set_ylim(0, 0.5)
@@ -139,34 +140,40 @@ def create_new_seq(df, power=1):
     return ''.join(seq)
 
 
-def insert_seq(seq, insert, position):
-    new_seq = list(seq)
-    locations = np.arange(len(insert)) - len(insert) // 2 + position
-    for loc, base in zip(locations, insert):
-        if (0 < loc < len(seq) - 1):
-            if new_seq[loc].islower():
-                new_seq[loc] = base
+def insert_seq(seq, insert, position, show=False):
+    keep = np.asarray(list(seq)) == np.asarray(list(seq.upper()))
+    seq = np.asarray(list(seq))
+    new_seq = seq.copy()
+    change = np.arange(len(insert)) - len(insert) // 2 + position
+    new_seq[change] = list(insert)
+    new_seq[keep] = seq[keep]
+
+    if show:
+        print(f'\n\n{"".join(seq[change])}\n->\n{"".join(new_seq[change])}')
+
     return ''.join(new_seq)
 
 
 if __name__ == '__main__':
     filename = r'data/PHO5.fasta'
-    w = 147
-    mu = -w * 9.0 / 74
+    w = 100
+    mu = -w * 8.0 / 74
     seq = read_fasta(filename)
 
     # seq = create_dna(len(seq), 300 + np.arange(10) * 197)
     # mu = -10
 
     new_seq = seq
-    for i in [708, 904]:
+    for i in [713, 904]:
     # for i in []:
-        insert = create_new_seq(get_probability_nucleosome_folding(w, 10.1), -2)
+        insert = create_new_seq(get_probability_nucleosome_folding(w, 10.1), -20)
         # pA = 0.6
         # p = [pA] + [(1 - pA) / 3] * 3
         # insert = ''.join(np.random.choice(list('ACGT'), w, p=p))
-        print(insert)
-        new_seq = insert_seq(new_seq, insert, i)
+        pos = 2425
+
+        insert = seq[pos - w//2: pos+w].upper()
+        new_seq = insert_seq(new_seq, insert, i+17, show=True)
 
     fig = plt.figure(figsize=(13, 2))
     plt.tight_layout()
