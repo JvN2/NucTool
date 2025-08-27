@@ -6,32 +6,32 @@
   <title>Nucleosome Occupancy (Browser)</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <style>
-    :root { --bg: #0f172a; --panel: #111827; --text: #e5e7eb; --muted:#9ca3af; --accent:#22c55e; }
+    :root { --bg: #ffffff; --panel: #f9fafb; --text: #111827; --muted:#6b7280; --accent:#2563eb; --grid:#e5e7eb; }
     html, body { height: 100%; }
     body {
       margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
       background: var(--bg); color: var(--text);
       display: grid; grid-template-rows: auto 1fr; gap: 16px;
     }
-    header { padding: 16px 20px; background: var(--panel); border-bottom: 1px solid #1f2937; }
+    header { padding: 16px 20px; background: var(--panel); border-bottom: 1px solid var(--grid); }
     h1 { margin: 0; font-size: 18px; font-weight: 600; }
     .container { display: grid; grid-template-columns: 380px 1fr; gap: 16px; padding: 0 20px 20px; }
-    .card { background: var(--panel); border: 1px solid #1f2937; border-radius: 10px; }
-    .card h2 { font-size: 14px; margin: 0; padding: 12px 14px; border-bottom: 1px solid #1f2937; color: var(--muted); font-weight: 600; }
+    .card { background: var(--panel); border: 1px solid var(--grid); border-radius: 10px; }
+    .card h2 { font-size: 14px; margin: 0; padding: 12px 14px; border-bottom: 1px solid var(--grid); color: var(--muted); font-weight: 600; }
     .card .content { padding: 12px 14px; }
     label { font-size: 12px; color: var(--muted); display: block; margin: 12px 0 6px; }
     textarea, input, button { width: 100%; box-sizing: border-box; }
-    textarea, input { background: #0b1220; border: 1px solid #1f2937; color: var(--text); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+    textarea, input { background: #ffffff; border: 1px solid var(--grid); color: var(--text); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
     textarea { min-height: 140px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
     .row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
     button {
-      margin-top: 14px; background: var(--accent); border: none; color: #052e13; font-weight: 700; padding: 10px 12px; border-radius: 8px; cursor: pointer;
+      margin-top: 14px; background: var(--accent); border: none; color: #ffffff; font-weight: 700; padding: 10px 12px; border-radius: 8px; cursor: pointer;
       transition: filter .15s ease-in-out; font-size: 14px;
     }
     button:hover { filter: brightness(1.05); }
     .note { font-size: 12px; color: var(--muted); margin-top: 8px; }
-    canvas { background: #0b1220; border-radius: 10px; }
-    .error { color: #fca5a5; font-size: 12px; margin-top: 8px; white-space: pre-wrap; }
+    canvas { background: #ffffff; border-radius: 10px; }
+    .error { color: #b91c1c; font-size: 12px; margin-top: 8px; white-space: pre-wrap; }
     .footer { font-size: 12px; color: var(--muted); padding: 0 20px 20px; }
   </style>
 </head>
@@ -68,7 +68,7 @@
         </div>
         <button id="runBtn">Run</button>
         <div id="error" class="error"></div>
-        <p class="note">Sequence is uppercased and converted U→T. Non-ACGT characters are removed.</p>
+        <p class="note">Runs your Python code in-browser via Pyodide. Sequence is uppercased and converted U→T. Non-ACGT removed.</p>
       </div>
     </div>
 
@@ -79,184 +79,13 @@
       </div>
     </div>
   </div>
-  <div class="footer">Tip: For GitHub Pages, place this file in the repository's docs/ folder and enable Pages in settings.</div>
+  <div class="footer">Tip: For GitHub Pages, place this file in docs/ and enable Pages in settings.</div>
 
+  <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <!-- Pyodide for Python in the browser -->
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js"></script>
   <script>
-    // --- Helpers (JS equivalents of your Python) ---
-    const A=0, C=1, G=2, T=3;
-    const ASCII_TO_IDX = new Int8Array(256).fill(-1);
-    ASCII_TO_IDX['A'.charCodeAt(0)] = A;
-    ASCII_TO_IDX['C'.charCodeAt(0)] = C;
-    ASCII_TO_IDX['G'.charCodeAt(0)] = G;
-    ASCII_TO_IDX['T'.charCodeAt(0)] = T;
-
-    function cleanSeq(dna){
-      dna = dna.toUpperCase().replace(/U/g, 'T');
-      return dna.replace(/[^GATC]/g, '');
-    }
-
-    function encodeSeq(seq){
-      const out = new Int8Array(seq.length);
-      for(let i=0;i<seq.length;i++) out[i] = ASCII_TO_IDX[seq.charCodeAt(i)];
-      return out;
-    }
-
-    function getWeight(w, p, b){
-      // weights[prev][curr][s]
-      const weights = Array.from({length:4}, ()=> Array.from({length:4}, ()=> new Float64Array(w)));
-      for(let s=0;s<w;s++){
-        const sin = b * Math.sin(2*Math.PI*s/p);
-        // Row A
-        weights[A][A][s] = 0.25 + sin;
-        weights[A][C][s] = 0.25 - sin/3;
-        weights[A][G][s] = 0.25 - sin/3;
-        weights[A][T][s] = 0.25 - sin/3;
-        // Row C (flat)
-        weights[C][A][s] = 0.25; weights[C][C][s] = 0.25; weights[C][G][s] = 0.25; weights[C][T][s] = 0.25;
-        // Row G
-        weights[G][A][s] = 0.25 + sin/3;
-        weights[G][C][s] = 0.25 - sin;
-        weights[G][G][s] = 0.25 + sin/3;
-        weights[G][T][s] = 0.25 + sin/3;
-        // Row T
-        weights[T][A][s] = 0.25 + sin;
-        weights[T][C][s] = 0.25 - sin;
-        weights[T][G][s] = 0.25 - sin;
-        weights[T][T][s] = 0.25 + sin;
-      }
-      return weights;
-    }
-
-    function calcE(seq, w, amplitude, period){
-      const idx = encodeSeq(seq);
-      const L = idx.length;
-      const numWin = L - w;
-      if(numWin <= 0) return new Float64Array(0);
-
-      const weights = getWeight(w, period, amplitude);
-
-      const log_p_f = new Float64Array(numWin);
-      const log_p_r = new Float64Array(numWin);
-
-      for(let s=0;s<w;s++){
-        for(let i=0;i<numWin;i++){
-          const prev_f = idx[i + s - 1];
-          const curr_f = idx[i + s];
-          const f = Math.max(weights[prev_f][curr_f][s], 1e-300);
-          log_p_f[i] += Math.log(f);
-
-          const a = idx[i + w - s];
-          const b = idx[i + w - s - 1];
-          const rprev = 3 - a;
-          const rcurr = 3 - b;
-          const r = Math.max(weights[rprev][rcurr][s], 1e-300);
-          log_p_r[i] += Math.log(r);
-        }
-      }
-
-      const scale = Math.pow(4.0, w);
-      const p_f = new Float64Array(numWin);
-      const p_r = new Float64Array(numWin);
-      for(let i=0;i<numWin;i++){
-        p_f[i] = Math.exp(log_p_f[i]) * scale;
-        p_r[i] = Math.exp(log_p_r[i]) * scale;
-      }
-      // roll -1
-      const pr0 = p_r[0];
-      for(let i=0;i<numWin-1;i++) p_r[i] = p_r[i+1];
-      p_r[numWin-1] = pr0;
-
-      const E = new Float64Array(numWin);
-      for(let i=0;i<numWin;i++){
-        const pf = p_f[i];
-        const pr = p_r[i];
-        E[i] = (pr * Math.log(pr) + pf * Math.log(pf)) / (pr + pf);
-      }
-      return E;
-    }
-
-    function smooth(x, window){
-      if(window <= 1 || x.length === 0) return x.slice();
-      const pad = window - 1;
-      const left = x.slice(1, window).reverse();
-      const right = x.slice(x.length - window, x.length - 1).reverse();
-      const s = left.concat(Array.from(x), right);
-      const out = new Float64Array(x.length + 1);
-      const inv = 1/window;
-      let acc = 0;
-      for(let i=0;i<window;i++) acc += s[i];
-      for(let i=0;i<=x.length;i++){
-        out[i] = acc * inv;
-        if(i + window < s.length) acc += s[i + window];
-        acc -= s[i];
-      }
-      return out.slice(pad, pad + x.length + 1);
-    }
-
-    function vanderlick(E, mu, footprint){
-      const Eo = new Float64Array(E.length);
-      for(let i=0;i<E.length;i++) Eo[i] = E[i] - mu;
-
-      const n = Eo.length;
-      const forward = new Float64Array(n);
-      let sumPrev = 0;
-      for(let i=0;i<n;i++){
-        forward[i] = Math.exp(Eo[i] - sumPrev);
-        sumPrev += forward[i];
-        if(i >= footprint) sumPrev -= forward[i - footprint];
-      }
-
-      const backward = new Float64Array(n);
-      const rf = new Float64Array(n);
-      for(let i=0;i<n;i++) rf[i] = forward[n-1-i];
-
-      let sumProd = 0;
-      for(let i=0;i<n;i++){
-        backward[i] = 1 - sumProd;
-        sumProd += rf[i] * backward[i];
-        if(i >= footprint) sumProd -= rf[i - footprint] * backward[i - footprint];
-      }
-
-      const out = new Float64Array(n);
-      for(let i=0;i<n;i++) out[i] = forward[i] * backward[n-1-i];
-      return out;
-    }
-
-    function convolveSame(signal, kernelLen){
-      // simple boxcar of length kernelLen, same mode
-      const half = Math.floor(kernelLen/2);
-      const padded = new Float64Array(signal.length + 2*half);
-      for(let i=0;i<signal.length;i++) padded[i+half] = signal[i];
-      const out = new Float64Array(signal.length);
-      let acc = 0;
-      for(let i=0;i<kernelLen;i++) acc += padded[i];
-      const inv = 1/kernelLen;
-      for(let i=0;i<signal.length;i++){
-        out[i] = acc * inv * kernelLen; // match numpy.convolve with ones(...)
-        if(i + kernelLen < padded.length) acc += padded[i + kernelLen];
-        acc -= padded[i];
-      }
-      return out;
-    }
-
-    function calcAll(seq, w, mu, amplitude, period){
-      const E_raw = calcE(seq, w, amplitude, period);
-      const E = smooth(E_raw, 10);
-      const P = vanderlick(E, mu, w); // using w as footprint to match input control
-      const leftPad = Math.floor((w + 1) / 2);
-      const rightPad = Math.floor(w / 2);
-
-      const Ppad = new Float64Array(P.length + leftPad + rightPad);
-      for(let i=0;i<leftPad;i++) Ppad[i] = 0;
-      Ppad.set(P, leftPad);
-      for(let i=0;i<rightPad;i++) Ppad[leftPad + P.length + i] = 0;
-
-      const occupancy = convolveSame(Ppad, 146);
-      return { E_raw, E, P: Ppad, occupancy };
-    }
-
-    // --- UI wiring ---
     const elSeq = document.getElementById('sequence');
     const elMu = document.getElementById('chemicalPotential');
     const elFoot = document.getElementById('footprint');
@@ -266,54 +95,184 @@
     const elErr = document.getElementById('error');
     const ctx = document.getElementById('chart');
 
-    // Seed with a short example
+    // Seed example
     elSeq.value = 'ACAGGATGTATATATCTGACACGTGCCTGGAGACTAGGGAGTAATCCCCTTGGCGGTTAAAACGCGGGGGACAGCGCGTACGTGCGTTTAAGCGGTGCTAGAGCTGTCTACGACCAATTGAGCGGCCTCGGCACCGGGATTCTCCAG';
 
     let chart;
-    function render(data){
-      const labels = Array.from({length: data.occupancy.length}, (_, i)=> i);
-      const ds = {
-        label: 'Occupancy', data: Array.from(data.occupancy), borderColor: '#22c55e', borderWidth: 2, pointRadius: 0,
-      };
+    function render(occupancy){
+      const labels = Array.from({length: occupancy.length}, (_, i)=> i);
+      const ds = { label: 'Occupancy', data: occupancy, borderColor: '#2563eb', borderWidth: 2, pointRadius: 0 };
       if(chart){ chart.data.labels = labels; chart.data.datasets = [ds]; chart.update(); return; }
       chart = new Chart(ctx, {
-        type: 'line',
-        data: { labels, datasets: [ds] },
+        type: 'line', data: { labels, datasets: [ds] },
         options: {
-          responsive: true,
-          maintainAspectRatio: false,
+          responsive: true, maintainAspectRatio: false,
           scales: {
-            x: { ticks: { color: '#9ca3af' }, grid: { color: '#1f2937' } },
-            y: { ticks: { color: '#9ca3af' }, grid: { color: '#1f2937' } },
+            x: { ticks: { color: '#6b7280' }, grid: { color: '#e5e7eb' } },
+            y: { ticks: { color: '#6b7280' }, grid: { color: '#e5e7eb' } },
           },
-          plugins: { legend: { labels: { color: '#9ca3af' } } },
-        },
+          plugins: { legend: { labels: { color: '#6b7280' } } },
+        }
       });
     }
 
-    function run(){
+    let pyReady = (async () => {
+      const pyodide = await loadPyodide();
+      await pyodide.loadPackage(['numpy']);
+
+      // Provide the Python core (trimmed to essentials and mirrored from your file)
+      const pyCode = `
+import re, random
+import numpy as nu
+from dataclasses import dataclass
+
+FOOTPRINT = 147
+SMOOTH_WINDOW = 10
+OCCUPANCY_KERNEL = 146
+
+_ASCII_TO_IDX = nu.full(256, -1, dtype=nu.int8)
+_ASCII_TO_IDX[ord('A')] = 0
+_ASCII_TO_IDX[ord('C')] = 1
+_ASCII_TO_IDX[ord('G')] = 2
+_ASCII_TO_IDX[ord('T')] = 3
+
+@dataclass(frozen=True)
+class NucPositionResult:
+    energy_raw: nu.ndarray
+    energy_smoothed: nu.ndarray
+    dyad_probability: nu.ndarray
+    occupancy: nu.ndarray
+
+def CleanSeq(dna: str) -> str:
+    dna = dna.upper().replace('U','T')
+    return re.sub(r"[^GATC]", "", dna)
+
+def encode_seq(seq: str) -> nu.ndarray:
+    b = nu.frombuffer(seq.encode('ascii'), dtype=nu.uint8)
+    return _ASCII_TO_IDX[b]
+
+def getweight(w: int, p: float, b: float) -> nu.ndarray:
+    x = nu.arange(w, dtype=nu.float64)
+    s = b * nu.sin(2 * nu.pi * x / p)
+    weights = nu.empty((4,4,w), dtype=nu.float64)
+    weights[0,0] = 0.25 + s
+    weights[0,1] = 0.25 - s/3
+    weights[0,2] = 0.25 - s/3
+    weights[0,3] = 0.25 - s/3
+    weights[1,0] = 0.25
+    weights[1,1] = 0.25
+    weights[1,2] = 0.25
+    weights[1,3] = 0.25
+    weights[2,0] = 0.25 + s/3
+    weights[2,1] = 0.25 - s
+    weights[2,2] = 0.25 + s/3
+    weights[2,3] = 0.25 + s/3
+    weights[3,0] = 0.25 + s
+    weights[3,1] = 0.25 - s
+    weights[3,2] = 0.25 - s
+    weights[3,3] = 0.25 + s
+    return weights
+
+def calcE(seq: str, w: int, amplitude: float, period: float) -> nu.ndarray:
+    idx = encode_seq(seq)
+    L = idx.size
+    num_win = L - w
+    if num_win <= 0:
+        return nu.array([], dtype=nu.float64)
+    weights = getweight(w, period, amplitude)
+    log_weights = nu.log(nu.clip(weights, 1e-300, None))
+    log_p_f = nu.zeros(num_win, dtype=nu.float64)
+    log_p_r = nu.zeros(num_win, dtype=nu.float64)
+    i = nu.arange(num_win)
+    for s in range(w):
+        prev_f = idx[i + s - 1]
+        curr_f = idx[i + s]
+        log_p_f += log_weights[prev_f, curr_f, s]
+        a = idx[i + w - s]
+        b = idx[i + w - s - 1]
+        rprev = 3 - a
+        rcurr = 3 - b
+        log_p_r += log_weights[rprev, rcurr, s]
+    p_f = nu.exp(log_p_f) * (4.0 ** w)
+    p_r = nu.exp(log_p_r) * (4.0 ** w)
+    p_r = nu.roll(p_r, -1)
+    E = (p_r * nu.log(p_r) + p_f * nu.log(p_f)) / (p_r + p_f)
+    return E
+
+def smooth(x: nu.ndarray, window_len: int) -> nu.ndarray:
+    if window_len <= 1 or x.size == 0:
+        return x
+    s = nu.r_[x[window_len - 1 : 0 : -1], x, x[-1:-window_len:-1]]
+    w = nu.ones(window_len, dtype=nu.float64)
+    y = nu.convolve(w / w.sum(), s, mode='valid')
+    return y[len(x[window_len - 1 : 0 : -1]) : len(x[window_len - 1 : 0 : -1]) + len(x) + 1]
+
+def vanderlick(Energy: nu.ndarray, mu: float, footprint: int) -> nu.ndarray:
+    E_out = Energy - mu
+    n = E_out.size
+    forward = nu.zeros(n, dtype=nu.float64)
+    sum_prev = 0.0
+    for i in range(n):
+        forward[i] = nu.exp(E_out[i] - sum_prev)
+        sum_prev += forward[i]
+        if i >= footprint:
+            sum_prev -= forward[i - footprint]
+    backward = nu.zeros(n, dtype=nu.float64)
+    r_forward = forward[::-1]
+    sum_prod = 0.0
+    for i in range(n):
+        backward[i] = 1.0 - sum_prod
+        sum_prod += r_forward[i] * backward[i]
+        if i >= footprint:
+            sum_prod -= r_forward[i - footprint] * backward[i - footprint]
+    return forward * backward[::-1]
+
+def CalcNucPositions(sequence: str, w: int, chemical_potential: float, amplitude: float, period: float) -> NucPositionResult:
+    sequence = CleanSeq(sequence)
+    energy_raw = calcE(sequence, w, amplitude, period)
+    energy_smoothed = smooth(energy_raw, SMOOTH_WINDOW)
+    dyad_probability = vanderlick(energy_smoothed, chemical_potential, w)
+    left_pad = (w + 1) // 2
+    right_pad = w // 2
+    dyad_probability = nu.concatenate((nu.zeros(left_pad, dtype=nu.float64), dyad_probability, nu.zeros(right_pad, dtype=nu.float64)))
+    occupancy = nu.convolve(dyad_probability, nu.ones(OCCUPANCY_KERNEL, dtype=nu.float64), mode='same')
+    return NucPositionResult(energy_raw, energy_smoothed, dyad_probability, occupancy)
+`;      
+      pyodide.runPython(pyCode);
+      return pyodide;
+    })();
+
+    async function run(){
       try{
         elErr.textContent = '';
-        let seq = cleanSeq(elSeq.value || '');
+        const py = await pyReady;
+        const seq = (elSeq.value || '').toString();
         const mu = parseFloat(elMu.value);
         const w = Math.max(1, Math.floor(parseFloat(elFoot.value)) || 147);
         const amp = parseFloat(elAmp.value);
         const per = parseFloat(elPer.value);
+        if(seq.length < w + 2){ throw new Error(`Sequence too short for footprint w=${w}. Provide at least w+2 bases.`); }
 
-        if(seq.length < w + 2){
-          throw new Error(`Sequence too short for footprint w=${w}. Provide at least w+2 bases.`);
-        }
+        // call Python CalcNucPositions
+        py.globals.set('JS_SEQ', seq);
+        py.globals.set('JS_W', w);
+        py.globals.set('JS_MU', mu);
+        py.globals.set('JS_AMP', amp);
+        py.globals.set('JS_PER', per);
+        py.runPython(`res = CalcNucPositions(JS_SEQ, JS_W, JS_MU, JS_AMP, JS_PER)`);
 
-        const res = calcAll(seq, w, mu, amp, per);
-        render(res);
+        // fetch occupancy as a plain JS array
+        const occ = py.runPython(`res.occupancy.tolist()`);
+        render(occ);
       }catch(e){
+        console.error(e);
         elErr.textContent = String(e?.message || e);
       }
     }
 
     elRun.addEventListener('click', run);
-    // Auto-run once
-    run();
+    // Auto-run once after Pyodide is loaded
+    (async () => { try { await pyReady; await run(); } catch(e) { elErr.textContent = String(e?.message || e); } })();
   </script>
 </body>
 </html>
