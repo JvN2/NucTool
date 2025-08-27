@@ -2,6 +2,7 @@ import numpy as nu
 import re, random
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
+from icecream import ic
 
 # ----------------------------
 # Constants (no magic numbers)
@@ -227,6 +228,7 @@ period = 10.1
 
 if __name__ == "__main__":
     seq = CreateDNA(2000)
+    ic(seq)
     res = CalcNucPositions(seq, footprint, chemical_potential, amplitude, period)
     plt.plot(res.occupancy)
     plt.xlabel("position (bp)")
