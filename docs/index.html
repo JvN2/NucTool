@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nucleosome Occupancy (Browser)</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <style>
+    :root { --bg: #0f172a; --panel: #111827; --text: #e5e7eb; --muted:#9ca3af; --accent:#22c55e; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: var(--bg); color: var(--text);
+      display: grid; grid-template-rows: auto 1fr; gap: 16px;
+    }
+    header { padding: 16px 20px; background: var(--panel); border-bottom: 1px solid #1f2937; }
+    h1 { margin: 0; font-size: 18px; font-weight: 600; }
+    .container { display: grid; grid-template-columns: 380px 1fr; gap: 16px; padding: 0 20px 20px; }
+    .card { background: var(--panel); border: 1px solid #1f2937; border-radius: 10px; }
+    .card h2 { font-size: 14px; margin: 0; padding: 12px 14px; border-bottom: 1px solid #1f2937; color: var(--muted); font-weight: 600; }
+    .card .content { padding: 12px 14px; }
+    label { font-size: 12px; color: var(--muted); display: block; margin: 12px 0 6px; }
+    textarea, input, button { width: 100%; box-sizing: border-box; }
+    textarea, input { background: #0b1220; border: 1px solid #1f2937; color: var(--text); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+    textarea { min-height: 140px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+    button {
+      margin-top: 14px; background: var(--accent); border: none; color: #052e13; font-weight: 700; padding: 10px 12px; border-radius: 8px; cursor: pointer;
+      transition: filter .15s ease-in-out; font-size: 14px;
+    }
+    button:hover { filter: brightness(1.05); }
+    .note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+    canvas { background: #0b1220; border-radius: 10px; }
+    .error { color: #fca5a5; font-size: 12px; margin-top: 8px; white-space: pre-wrap; }
+    .footer { font-size: 12px; color: var(--muted); padding: 0 20px 20px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Nucleosome Occupancy</h1>
+  </header>
+  <div class="container">
+    <div class="card">
+      <h2>Inputs</h2>
+      <div class="content">
+        <label for="sequence">DNA sequence (A/C/G/T)</label>
+        <textarea id="sequence" spellcheck="false" placeholder="Paste or type sequence here..."></textarea>
+        <div class="row">
+          <div>
+            <label for="chemicalPotential">Chemical potential (mu)</label>
+            <input id="chemicalPotential" type="number" step="0.1" value="-8.5" />
+          </div>
+          <div>
+            <label for="footprint">Footprint (bp)</label>
+            <input id="footprint" type="number" step="1" value="147" />
+          </div>
+          <div>
+            <label for="amplitude">Amplitude (B)</label>
+            <input id="amplitude" type="number" step="0.01" value="0.2" />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="period">Period (bp)</label>
+            <input id="period" type="number" step="0.1" value="10.1" />
+          </div>
+          <div></div><div></div>
+        </div>
+        <button id="runBtn">Run</button>
+        <div id="error" class="error"></div>
+        <p class="note">Sequence is uppercased and converted U→T. Non-ACGT characters are removed.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Occupancy</h2>
+      <div class="content">
+        <canvas id="chart" height="320"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="footer">Tip: For GitHub Pages, place this file in the repository's docs/ folder and enable Pages in settings.</div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script>
+    // --- Helpers (JS equivalents of your Python) ---
+    const A=0, C=1, G=2, T=3;
+    const ASCII_TO_IDX = new Int8Array(256).fill(-1);
+    ASCII_TO_IDX['A'.charCodeAt(0)] = A;
+    ASCII_TO_IDX['C'.charCodeAt(0)] = C;
+    ASCII_TO_IDX['G'.charCodeAt(0)] = G;
+    ASCII_TO_IDX['T'.charCodeAt(0)] = T;
+
+    function cleanSeq(dna){
+      dna = dna.toUpperCase().replace(/U/g, 'T');
+      return dna.replace(/[^GATC]/g, '');
+    }
+
+    function encodeSeq(seq){
+      const out = new Int8Array(seq.length);
+      for(let i=0;i<seq.length;i++) out[i] = ASCII_TO_IDX[seq.charCodeAt(i)];
+      return out;
+    }
+
+    function getWeight(w, p, b){
+      // weights[prev][curr][s]
+      const weights = Array.from({length:4}, ()=> Array.from({length:4}, ()=> new Float64Array(w)));
+      for(let s=0;s<w;s++){
+        const sin = b * Math.sin(2*Math.PI*s/p);
+        // Row A
+        weights[A][A][s] = 0.25 + sin;
+        weights[A][C][s] = 0.25 - sin/3;
+        weights[A][G][s] = 0.25 - sin/3;
+        weights[A][T][s] = 0.25 - sin/3;
+        // Row C (flat)
+        weights[C][A][s] = 0.25; weights[C][C][s] = 0.25; weights[C][G][s] = 0.25; weights[C][T][s] = 0.25;
+        // Row G
+        weights[G][A][s] = 0.25 + sin/3;
+        weights[G][C][s] = 0.25 - sin;
+        weights[G][G][s] = 0.25 + sin/3;
+        weights[G][T][s] = 0.25 + sin/3;
+        // Row T
+        weights[T][A][s] = 0.25 + sin;
+        weights[T][C][s] = 0.25 - sin;
+        weights[T][G][s] = 0.25 - sin;
+        weights[T][T][s] = 0.25 + sin;
+      }
+      return weights;
+    }
+
+    function calcE(seq, w, amplitude, period){
+      const idx = encodeSeq(seq);
+      const L = idx.length;
+      const numWin = L - w;
+      if(numWin <= 0) return new Float64Array(0);
+
+      const weights = getWeight(w, period, amplitude);
+
+      const log_p_f = new Float64Array(numWin);
+      const log_p_r = new Float64Array(numWin);
+
+      for(let s=0;s<w;s++){
+        for(let i=0;i<numWin;i++){
+          const prev_f = idx[i + s - 1];
+          const curr_f = idx[i + s];
+          const f = Math.max(weights[prev_f][curr_f][s], 1e-300);
+          log_p_f[i] += Math.log(f);
+
+          const a = idx[i + w - s];
+          const b = idx[i + w - s - 1];
+          const rprev = 3 - a;
+          const rcurr = 3 - b;
+          const r = Math.max(weights[rprev][rcurr][s], 1e-300);
+          log_p_r[i] += Math.log(r);
+        }
+      }
+
+      const scale = Math.pow(4.0, w);
+      const p_f = new Float64Array(numWin);
+      const p_r = new Float64Array(numWin);
+      for(let i=0;i<numWin;i++){
+        p_f[i] = Math.exp(log_p_f[i]) * scale;
+        p_r[i] = Math.exp(log_p_r[i]) * scale;
+      }
+      // roll -1
+      const pr0 = p_r[0];
+      for(let i=0;i<numWin-1;i++) p_r[i] = p_r[i+1];
+      p_r[numWin-1] = pr0;
+
+      const E = new Float64Array(numWin);
+      for(let i=0;i<numWin;i++){
+        const pf = p_f[i];
+        const pr = p_r[i];
+        E[i] = (pr * Math.log(pr) + pf * Math.log(pf)) / (pr + pf);
+      }
+      return E;
+    }
+
+    function smooth(x, window){
+      if(window <= 1 || x.length === 0) return x.slice();
+      const pad = window - 1;
+      const left = x.slice(1, window).reverse();
+      const right = x.slice(x.length - window, x.length - 1).reverse();
+      const s = left.concat(Array.from(x), right);
+      const out = new Float64Array(x.length + 1);
+      const inv = 1/window;
+      let acc = 0;
+      for(let i=0;i<window;i++) acc += s[i];
+      for(let i=0;i<=x.length;i++){
+        out[i] = acc * inv;
+        if(i + window < s.length) acc += s[i + window];
+        acc -= s[i];
+      }
+      return out.slice(pad, pad + x.length + 1);
+    }
+
+    function vanderlick(E, mu, footprint){
+      const Eo = new Float64Array(E.length);
+      for(let i=0;i<E.length;i++) Eo[i] = E[i] - mu;
+
+      const n = Eo.length;
+      const forward = new Float64Array(n);
+      let sumPrev = 0;
+      for(let i=0;i<n;i++){
+        forward[i] = Math.exp(Eo[i] - sumPrev);
+        sumPrev += forward[i];
+        if(i >= footprint) sumPrev -= forward[i - footprint];
+      }
+
+      const backward = new Float64Array(n);
+      const rf = new Float64Array(n);
+      for(let i=0;i<n;i++) rf[i] = forward[n-1-i];
+
+      let sumProd = 0;
+      for(let i=0;i<n;i++){
+        backward[i] = 1 - sumProd;
+        sumProd += rf[i] * backward[i];
+        if(i >= footprint) sumProd -= rf[i - footprint] * backward[i - footprint];
+      }
+
+      const out = new Float64Array(n);
+      for(let i=0;i<n;i++) out[i] = forward[i] * backward[n-1-i];
+      return out;
+    }
+
+    function convolveSame(signal, kernelLen){
+      // simple boxcar of length kernelLen, same mode
+      const half = Math.floor(kernelLen/2);
+      const padded = new Float64Array(signal.length + 2*half);
+      for(let i=0;i<signal.length;i++) padded[i+half] = signal[i];
+      const out = new Float64Array(signal.length);
+      let acc = 0;
+      for(let i=0;i<kernelLen;i++) acc += padded[i];
+      const inv = 1/kernelLen;
+      for(let i=0;i<signal.length;i++){
+        out[i] = acc * inv * kernelLen; // match numpy.convolve with ones(...)
+        if(i + kernelLen < padded.length) acc += padded[i + kernelLen];
+        acc -= padded[i];
+      }
+      return out;
+    }
+
+    function calcAll(seq, w, mu, amplitude, period){
+      const E_raw = calcE(seq, w, amplitude, period);
+      const E = smooth(E_raw, 10);
+      const P = vanderlick(E, mu, w); // using w as footprint to match input control
+      const leftPad = Math.floor((w + 1) / 2);
+      const rightPad = Math.floor(w / 2);
+
+      const Ppad = new Float64Array(P.length + leftPad + rightPad);
+      for(let i=0;i<leftPad;i++) Ppad[i] = 0;
+      Ppad.set(P, leftPad);
+      for(let i=0;i<rightPad;i++) Ppad[leftPad + P.length + i] = 0;
+
+      const occupancy = convolveSame(Ppad, 146);
+      return { E_raw, E, P: Ppad, occupancy };
+    }
+
+    // --- UI wiring ---
+    const elSeq = document.getElementById('sequence');
+    const elMu = document.getElementById('chemicalPotential');
+    const elFoot = document.getElementById('footprint');
+    const elAmp = document.getElementById('amplitude');
+    const elPer = document.getElementById('period');
+    const elRun = document.getElementById('runBtn');
+    const elErr = document.getElementById('error');
+    const ctx = document.getElementById('chart');
+
+    // Seed with a short example
+    elSeq.value = 'ACAGGATGTATATATCTGACACGTGCCTGGAGACTAGGGAGTAATCCCCTTGGCGGTTAAAACGCGGGGGACAGCGCGTACGTGCGTTTAAGCGGTGCTAGAGCTGTCTACGACCAATTGAGCGGCCTCGGCACCGGGATTCTCCAG';
+
+    let chart;
+    function render(data){
+      const labels = Array.from({length: data.occupancy.length}, (_, i)=> i);
+      const ds = {
+        label: 'Occupancy', data: Array.from(data.occupancy), borderColor: '#22c55e', borderWidth: 2, pointRadius: 0,
+      };
+      if(chart){ chart.data.labels = labels; chart.data.datasets = [ds]; chart.update(); return; }
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets: [ds] },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            x: { ticks: { color: '#9ca3af' }, grid: { color: '#1f2937' } },
+            y: { ticks: { color: '#9ca3af' }, grid: { color: '#1f2937' } },
+          },
+          plugins: { legend: { labels: { color: '#9ca3af' } } },
+        },
+      });
+    }
+
+    function run(){
+      try{
+        elErr.textContent = '';
+        let seq = cleanSeq(elSeq.value || '');
+        const mu = parseFloat(elMu.value);
+        const w = Math.max(1, Math.floor(parseFloat(elFoot.value)) || 147);
+        const amp = parseFloat(elAmp.value);
+        const per = parseFloat(elPer.value);
+
+        if(seq.length < w + 2){
+          throw new Error(`Sequence too short for footprint w=${w}. Provide at least w+2 bases.`);
+        }
+
+        const res = calcAll(seq, w, mu, amp, per);
+        render(res);
+      }catch(e){
+        elErr.textContent = String(e?.message || e);
+      }
+    }
+
+    elRun.addEventListener('click', run);
+    // Auto-run once
+    run();
+  </script>
+</body>
+</html>
