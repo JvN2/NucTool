@@ -180,8 +180,9 @@
           <div></div>
         </div>
         <button id="runBtn">Run</button>
+        <button id="downloadBtn">Download CSV</button>
         <div id="error" class="error"></div>
-        <p class="note">Runs your Python code in-browser via Pyodide. Sequence is uppercased and converted U→T. Non-ACGT
+        <p class="note">Sequence is uppercased and converted U→T. Non-ACGT
           removed.</p>
       </div>
     </div>
@@ -193,7 +194,13 @@
       </div>
     </div>
   </div>
-  <div class="footer">Tip: For GitHub Pages, place this file in docs/ and enable Pages in settings.</div>
+  <div class="footer">This is the code described in "Sequence-based prediction of single nucleosome positioning and
+    genome-wide nucleosome occupancy" (<a
+      href="https://doi.org/10.1073/pnas.1205659109">https://doi.org/10.1073/pnas.1205659109</a>).
+
+    Please make sure that you add enough DNA on both sides ( >1000bp of random sequence, which you may want to discard
+    later if you don't use it), to make sure that edge-effects will not dominate, unless you are particularly interested
+    in the nucleosome positioning effects of DNA ends.</div>
 
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -208,14 +215,19 @@
     const elRun = document.getElementById('runBtn');
     const elErr = document.getElementById('error');
     const ctx = document.getElementById('chart');
+    const elDownload = document.getElementById('downloadBtn');
 
     // Seed example
     elSeq.value = 'CTGGGGTTATACTTTAATAGGAAGGGGGGAACAAGTATACTTACAGAGCTGTCTATATAACGGTCATGAAATTAGGGTTCACCCGAGGAAGCCCTTTTTGCGAGGCCCGTACCGAAGCCGCACCGGACTTTTGTGGGGCAGTCCTCCCATCCACATGCTGCCGGAGTTAAATCTTTCTCACTTTTCCACGCGATTGAGCACGTGGCTGGTGAATACTTTTGACTATTAGTCCTCTTTGCACATCAATTGGGGAGATTCCTGTGTTTCCAAGGTCAAAGACGAGGGTCAACCTCAAAAAGTGGAATCACACGATATAATATGTTGCAAACTAGTTGGTAAAACGTCCACTCCTGGATCGACTGGGCCTACCTATTCACCTCACTTGGTTAACTCCGTTTGGGACAGTTTCTCCTCACCCACGTCATTTGCGGTGAGAACCTACGATTTTTTCCAAGGTCGTAACTCGACGTTAACCCGGCCGAACAGCACCCAGCGCCGCTGAGACCTCAGTTAAAATTCCTATAATGGTTCGGATTCGGTCGTACGATAGTCATCGGACTAACTTTTCCTCTACGGAGTGCAGAGCTCCCCATGCCCGATAAGCAGGTAGTGATTGTACCTCAGACTGGTGTTACTCCACCCTTTGGCTATCCGCGCGTTTGAGAATCGTTCATTCGCAAACTAGTTTATGTGTCGACCGCATGCTGCAAAGTACCTAAAATGGGCTCATAACCCAACCGCAGCAGAGACATGTCCCCGAGGCTTTTGATTCAAAGGTCGGGACACTAAAGATTAATCCATCCAAACATAATGGGTAATGCCACTATGGATGTTCTTTGTTCTGAACCTCTCGGGTCGTGACTTAATGCGTCCACCTTACCATTAGTACACCATTGTCAATACAAGCACTGAGTGCTCGCCCTTCTACAGGATGTATATATCTGACACGTGCCTGGAGACTAGGGAGTAATCCCCTTGGCGGTTAAAACGCGGGGGACAGCGCGTACGTGCGTTTAAGCGGTGCTAGAGCTGTCTACGACCAATTGAGCGGCCTCGGCACCGGGATTCTCCAGATGCCGCCACTACCGACACCCCGTAACTCCTGGGAGGGTATTCAAGGGCCCTTCTGATGAATACCATTGTGCTTATTTGTGTTCCGATTTTAAGTTAGCCCGCTATCTGGACAGTAATGAAACACCAGTGGTTAACATGCCAAATTATGTATTAGCTCTCTTAGGAAGTCACGGGGGCGAGGGGGTGTAGCAGCCTATGTGGTTTTGGTCGTTCTTAGGAACGCACATTCACTGCGATCTCACAGTTCACTACGCGGTATTCGATAGAACTATGGCAGAAGTGTCCTGATCGCTGATAATTTTCCGGTTTATTGCAACGGGGAACTGTTGCTCAGGTCACGGCTAACGGTATCTTCGAAATTCGACTGTAGGTTGATCTCCGGCGATGTAGAGTTGGTTATGTAGATCCACCCTTAGAGGTTTCGCCTATGGGCCCCGTTTGCAATTTGGTTGTCACTAGGGAATGCACATTATAACAAAACCTGTCCACGGGGGGGTCCATTTAGCGCGGTTCTCATATGGCGACATATATTGGCCACTATGCGGGAATTGAAAGAGTGGCCGAAGGTAGGTCCGTTAATCCCCCGACAAAATGGTACCCGTTTCATTGCTGGCTGAGTCAGAATTAGGATAGTAGTCGATGGGTACGGTGCATTTAAGCTACCGACGCGGTCACCTGATCCCAGGCGATCACAGACAACGGCACGGGATCCGTGCAAACACAGCCTATTTCGGTCGCCATGGCCATTCACGAAGGCCCTCAACTTCTCTACAGGTTCACGGTCGATATAACCTTGCAGCGAGCCGCTTCCCACGTTCTGACACTTAGGGTATTCTTCGCGAACGGAATTGGAGCTACGGCCAGCTAGCGACGTAGGTCCGTCGAACCACTACCTACCCAACATGGAGCCGTAACATTGATCTGA'
     let chart;
     function render(occupancy) {
       const labels = Array.from({ length: occupancy.length }, (_, i) => i);
+      // Determine tick interval based on plot size
+      let interval = 100;
+      if (labels.length > 10000) interval = 1000;
+      else if (labels.length > 2000) interval = 500;
       const ds = { label: 'Occupancy', data: occupancy, borderColor: '#2563eb', borderWidth: 2, pointRadius: 0 };
-      if (chart) { chart.data.labels = labels; chart.data.datasets = [ds]; chart.update(); return; }
+      if (chart) { chart.data.labels = labels; chart.data.datasets = [ds]; chart.options.scales.x.ticks.callback = (value, index) => (index % interval === 0 ? index : ''); chart.update(); return; }
       chart = new Chart(ctx, {
         type: 'line', data: { labels, datasets: [ds] },
         options: {
@@ -223,16 +235,18 @@
           maintainAspectRatio: false,
           scales: {
             x: {
+              title: { display: true, text: 'i (bp)', color: '#6b7280' },
               ticks: {
                 color: '#6b7280',
                 autoSkip: false,
-                callback: (value, index) => (index % 100 === 0 ? index : '')
+                callback: (value, index) => (index % interval === 0 ? index : '')
               },
               grid: { display: false }
             },
             y: {
               min: 0,
               max: 1,
+              title: { display: true, text: 'Occupancy', color: '#6b7280' },
               ticks: { color: '#6b7280' },
               grid: { display: false }
             }
@@ -368,6 +382,7 @@ def CalcNucPositions(sequence: str, w: int, chemical_potential: float, amplitude
       return pyodide;
     })();
 
+    let lastResult = null;
     async function run() {
       try {
         elErr.textContent = '';
@@ -387,8 +402,10 @@ def CalcNucPositions(sequence: str, w: int, chemical_potential: float, amplitude
         py.globals.set('JS_PER', per);
         py.runPython(`res = CalcNucPositions(JS_SEQ, JS_W, JS_MU, JS_AMP, JS_PER)`);
 
-        // fetch occupancy as a plain JS array
+        // fetch arrays we might want to export
         const occ = py.runPython(`res.occupancy.tolist()`);
+        const dyad = py.runPython(`res.dyad_probability.tolist()`);
+        lastResult = { occupancy: occ, dyad };
         render(occ);
       } catch (e) {
         console.error(e);
@@ -396,7 +413,30 @@ def CalcNucPositions(sequence: str, w: int, chemical_potential: float, amplitude
       }
     }
 
+    function downloadCSV() {
+      try {
+        if (!lastResult) { throw new Error('Run the model first'); }
+        const len = lastResult.occupancy.length;
+        const rows = ['i,occupancy,dyad_probability'];
+        for (let i = 0; i < len; i++) {
+          const o = lastResult.occupancy[i] ?? '';
+          const d = lastResult.dyad?.[i] ?? '';
+          rows.push(`${i},${o},${d}`);
+        }
+        const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'nucleosome_results.csv';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } catch (e) { elErr.textContent = String(e?.message || e); }
+    }
+
     elRun.addEventListener('click', run);
+    elDownload.addEventListener('click', downloadCSV);
     // Auto-run once after Pyodide is loaded
     (async () => { try { await pyReady; await run(); } catch (e) { elErr.textContent = String(e?.message || e); } })();
   </script>
