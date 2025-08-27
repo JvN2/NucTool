@@ -1,40 +1,152 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Nucleosome Occupancy (Browser)</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <style>
-    :root { --bg: #ffffff; --panel: #f9fafb; --text: #111827; --muted:#6b7280; --accent:#2563eb; --grid:#e5e7eb; }
-    html, body { height: 100%; }
+    :root {
+      --bg: #ffffff;
+      --panel: #f9fafb;
+      --text: #111827;
+      --muted: #6b7280;
+      --accent: #2563eb;
+      --grid: #e5e7eb;
+    }
+
+    html,
     body {
-      margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
-      background: var(--bg); color: var(--text);
-      display: grid; grid-template-rows: auto 1fr; gap: 16px;
+      height: 100%;
     }
-    header { padding: 16px 20px; background: var(--panel); border-bottom: 1px solid var(--grid); }
-    h1 { margin: 0; font-size: 18px; font-weight: 600; }
-    .container { display: grid; grid-template-columns: 380px 1fr; gap: 16px; padding: 0 20px 20px; }
-    .card { background: var(--panel); border: 1px solid var(--grid); border-radius: 10px; }
-    .card h2 { font-size: 14px; margin: 0; padding: 12px 14px; border-bottom: 1px solid var(--grid); color: var(--muted); font-weight: 600; }
-    .card .content { padding: 12px 14px; }
-    label { font-size: 12px; color: var(--muted); display: block; margin: 12px 0 6px; }
-    textarea, input, button { width: 100%; box-sizing: border-box; }
-    textarea, input { background: #ffffff; border: 1px solid var(--grid); color: var(--text); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
-    textarea { min-height: 140px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-    .row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: var(--bg);
+      color: var(--text);
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 16px;
+    }
+
+    header {
+      padding: 16px 20px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--grid);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .container {
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 16px;
+      padding: 0 20px 20px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--grid);
+      border-radius: 10px;
+    }
+
+    .card h2 {
+      font-size: 14px;
+      margin: 0;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--grid);
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .card .content {
+      padding: 12px 14px;
+    }
+
+    label {
+      font-size: 12px;
+      color: var(--muted);
+      display: block;
+      margin: 12px 0 6px;
+    }
+
+    textarea,
+    input,
     button {
-      margin-top: 14px; background: var(--accent); border: none; color: #ffffff; font-weight: 700; padding: 10px 12px; border-radius: 8px; cursor: pointer;
-      transition: filter .15s ease-in-out; font-size: 14px;
+      width: 100%;
+      box-sizing: border-box;
     }
-    button:hover { filter: brightness(1.05); }
-    .note { font-size: 12px; color: var(--muted); margin-top: 8px; }
-    canvas { background: #ffffff; border-radius: 10px; }
-    .error { color: #b91c1c; font-size: 12px; margin-top: 8px; white-space: pre-wrap; }
-    .footer { font-size: 12px; color: var(--muted); padding: 0 20px 20px; }
+
+    textarea,
+    input {
+      background: #ffffff;
+      border: 1px solid var(--grid);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 13px;
+    }
+
+    textarea {
+      min-height: 140px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+    }
+
+    button {
+      margin-top: 14px;
+      background: var(--accent);
+      border: none;
+      color: #ffffff;
+      font-weight: 700;
+      padding: 10px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: filter .15s ease-in-out;
+      font-size: 14px;
+    }
+
+    button:hover {
+      filter: brightness(1.05);
+    }
+
+    .note {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+
+    canvas {
+      background: #ffffff;
+      border-radius: 10px;
+    }
+
+    .error {
+      color: #b91c1c;
+      font-size: 12px;
+      margin-top: 8px;
+      white-space: pre-wrap;
+    }
+
+    .footer {
+      font-size: 12px;
+      color: var(--muted);
+      padding: 0 20px 20px;
+    }
   </style>
 </head>
+
 <body>
   <header>
     <h1>Nucleosome Occupancy</h1>
@@ -47,8 +159,8 @@
         <textarea id="sequence" spellcheck="false" placeholder="Paste or type sequence here..."></textarea>
         <div class="row">
           <div>
-            <label for="chemicalPotential">Chemical potential (mu)</label>
-            <input id="chemicalPotential" type="number" step="0.1" value="-8.5" />
+            <label for="period">Period (bp)</label>
+            <input id="period" type="number" step="0.1" value="10.1" />
           </div>
           <div>
             <label for="footprint">Footprint (bp)</label>
@@ -61,14 +173,16 @@
         </div>
         <div class="row">
           <div>
-            <label for="period">Period (bp)</label>
-            <input id="period" type="number" step="0.1" value="10.1" />
+            <label for="chemicalPotential">Chemical potential (kT)</label>
+            <input id="chemicalPotential" type="number" step="0.1" value="-8.5" />
           </div>
-          <div></div><div></div>
+          <div></div>
+          <div></div>
         </div>
         <button id="runBtn">Run</button>
         <div id="error" class="error"></div>
-        <p class="note">Runs your Python code in-browser via Pyodide. Sequence is uppercased and converted U→T. Non-ACGT removed.</p>
+        <p class="note">Runs your Python code in-browser via Pyodide. Sequence is uppercased and converted U→T. Non-ACGT
+          removed.</p>
       </div>
     </div>
 
@@ -96,22 +210,34 @@
     const ctx = document.getElementById('chart');
 
     // Seed example
-    elSeq.value = 'ACAGGATGTATATATCTGACACGTGCCTGGAGACTAGGGAGTAATCCCCTTGGCGGTTAAAACGCGGGGGACAGCGCGTACGTGCGTTTAAGCGGTGCTAGAGCTGTCTACGACCAATTGAGCGGCCTCGGCACCGGGATTCTCCAG';
-
+    elSeq.value = 'CTGGGGTTATACTTTAATAGGAAGGGGGGAACAAGTATACTTACAGAGCTGTCTATATAACGGTCATGAAATTAGGGTTCACCCGAGGAAGCCCTTTTTGCGAGGCCCGTACCGAAGCCGCACCGGACTTTTGTGGGGCAGTCCTCCCATCCACATGCTGCCGGAGTTAAATCTTTCTCACTTTTCCACGCGATTGAGCACGTGGCTGGTGAATACTTTTGACTATTAGTCCTCTTTGCACATCAATTGGGGAGATTCCTGTGTTTCCAAGGTCAAAGACGAGGGTCAACCTCAAAAAGTGGAATCACACGATATAATATGTTGCAAACTAGTTGGTAAAACGTCCACTCCTGGATCGACTGGGCCTACCTATTCACCTCACTTGGTTAACTCCGTTTGGGACAGTTTCTCCTCACCCACGTCATTTGCGGTGAGAACCTACGATTTTTTCCAAGGTCGTAACTCGACGTTAACCCGGCCGAACAGCACCCAGCGCCGCTGAGACCTCAGTTAAAATTCCTATAATGGTTCGGATTCGGTCGTACGATAGTCATCGGACTAACTTTTCCTCTACGGAGTGCAGAGCTCCCCATGCCCGATAAGCAGGTAGTGATTGTACCTCAGACTGGTGTTACTCCACCCTTTGGCTATCCGCGCGTTTGAGAATCGTTCATTCGCAAACTAGTTTATGTGTCGACCGCATGCTGCAAAGTACCTAAAATGGGCTCATAACCCAACCGCAGCAGAGACATGTCCCCGAGGCTTTTGATTCAAAGGTCGGGACACTAAAGATTAATCCATCCAAACATAATGGGTAATGCCACTATGGATGTTCTTTGTTCTGAACCTCTCGGGTCGTGACTTAATGCGTCCACCTTACCATTAGTACACCATTGTCAATACAAGCACTGAGTGCTCGCCCTTCTACAGGATGTATATATCTGACACGTGCCTGGAGACTAGGGAGTAATCCCCTTGGCGGTTAAAACGCGGGGGACAGCGCGTACGTGCGTTTAAGCGGTGCTAGAGCTGTCTACGACCAATTGAGCGGCCTCGGCACCGGGATTCTCCAGATGCCGCCACTACCGACACCCCGTAACTCCTGGGAGGGTATTCAAGGGCCCTTCTGATGAATACCATTGTGCTTATTTGTGTTCCGATTTTAAGTTAGCCCGCTATCTGGACAGTAATGAAACACCAGTGGTTAACATGCCAAATTATGTATTAGCTCTCTTAGGAAGTCACGGGGGCGAGGGGGTGTAGCAGCCTATGTGGTTTTGGTCGTTCTTAGGAACGCACATTCACTGCGATCTCACAGTTCACTACGCGGTATTCGATAGAACTATGGCAGAAGTGTCCTGATCGCTGATAATTTTCCGGTTTATTGCAACGGGGAACTGTTGCTCAGGTCACGGCTAACGGTATCTTCGAAATTCGACTGTAGGTTGATCTCCGGCGATGTAGAGTTGGTTATGTAGATCCACCCTTAGAGGTTTCGCCTATGGGCCCCGTTTGCAATTTGGTTGTCACTAGGGAATGCACATTATAACAAAACCTGTCCACGGGGGGGTCCATTTAGCGCGGTTCTCATATGGCGACATATATTGGCCACTATGCGGGAATTGAAAGAGTGGCCGAAGGTAGGTCCGTTAATCCCCCGACAAAATGGTACCCGTTTCATTGCTGGCTGAGTCAGAATTAGGATAGTAGTCGATGGGTACGGTGCATTTAAGCTACCGACGCGGTCACCTGATCCCAGGCGATCACAGACAACGGCACGGGATCCGTGCAAACACAGCCTATTTCGGTCGCCATGGCCATTCACGAAGGCCCTCAACTTCTCTACAGGTTCACGGTCGATATAACCTTGCAGCGAGCCGCTTCCCACGTTCTGACACTTAGGGTATTCTTCGCGAACGGAATTGGAGCTACGGCCAGCTAGCGACGTAGGTCCGTCGAACCACTACCTACCCAACATGGAGCCGTAACATTGATCTGA'
     let chart;
-    function render(occupancy){
-      const labels = Array.from({length: occupancy.length}, (_, i)=> i);
+    function render(occupancy) {
+      const labels = Array.from({ length: occupancy.length }, (_, i) => i);
       const ds = { label: 'Occupancy', data: occupancy, borderColor: '#2563eb', borderWidth: 2, pointRadius: 0 };
-      if(chart){ chart.data.labels = labels; chart.data.datasets = [ds]; chart.update(); return; }
+      if (chart) { chart.data.labels = labels; chart.data.datasets = [ds]; chart.update(); return; }
       chart = new Chart(ctx, {
         type: 'line', data: { labels, datasets: [ds] },
         options: {
-          responsive: true, maintainAspectRatio: false,
+          responsive: true,
+          maintainAspectRatio: false,
           scales: {
-            x: { ticks: { color: '#6b7280' }, grid: { color: '#e5e7eb' } },
-            y: { ticks: { color: '#6b7280' }, grid: { color: '#e5e7eb' } },
+            x: {
+              ticks: {
+                color: '#6b7280',
+                autoSkip: false,
+                callback: (value, index) => (index % 100 === 0 ? index : '')
+              },
+              grid: { display: false }
+            },
+            y: {
+              min: 0,
+              max: 1,
+              ticks: { color: '#6b7280' },
+              grid: { display: false }
+            }
           },
-          plugins: { legend: { labels: { color: '#6b7280' } } },
+          plugins: { legend: { display: false } }
         }
       });
     }
@@ -237,13 +363,13 @@ def CalcNucPositions(sequence: str, w: int, chemical_potential: float, amplitude
     dyad_probability = nu.concatenate((nu.zeros(left_pad, dtype=nu.float64), dyad_probability, nu.zeros(right_pad, dtype=nu.float64)))
     occupancy = nu.convolve(dyad_probability, nu.ones(OCCUPANCY_KERNEL, dtype=nu.float64), mode='same')
     return NucPositionResult(energy_raw, energy_smoothed, dyad_probability, occupancy)
-`;      
+`;
       pyodide.runPython(pyCode);
       return pyodide;
     })();
 
-    async function run(){
-      try{
+    async function run() {
+      try {
         elErr.textContent = '';
         const py = await pyReady;
         const seq = (elSeq.value || '').toString();
@@ -251,7 +377,7 @@ def CalcNucPositions(sequence: str, w: int, chemical_potential: float, amplitude
         const w = Math.max(1, Math.floor(parseFloat(elFoot.value)) || 147);
         const amp = parseFloat(elAmp.value);
         const per = parseFloat(elPer.value);
-        if(seq.length < w + 2){ throw new Error(`Sequence too short for footprint w=${w}. Provide at least w+2 bases.`); }
+        if (seq.length < w + 2) { throw new Error(`Sequence too short for footprint w=${w}. Provide at least w+2 bases.`); }
 
         // call Python CalcNucPositions
         py.globals.set('JS_SEQ', seq);
@@ -264,7 +390,7 @@ def CalcNucPositions(sequence: str, w: int, chemical_potential: float, amplitude
         // fetch occupancy as a plain JS array
         const occ = py.runPython(`res.occupancy.tolist()`);
         render(occ);
-      }catch(e){
+      } catch (e) {
         console.error(e);
         elErr.textContent = String(e?.message || e);
       }
@@ -272,7 +398,8 @@ def CalcNucPositions(sequence: str, w: int, chemical_potential: float, amplitude
 
     elRun.addEventListener('click', run);
     // Auto-run once after Pyodide is loaded
-    (async () => { try { await pyReady; await run(); } catch(e) { elErr.textContent = String(e?.message || e); } })();
+    (async () => { try { await pyReady; await run(); } catch (e) { elErr.textContent = String(e?.message || e); } })();
   </script>
 </body>
+
 </html>
