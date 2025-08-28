@@ -121,6 +121,16 @@
       filter: brightness(1.05);
     }
 
+    button:disabled {
+      background: #9ca3af !important;
+      cursor: not-allowed !important;
+      filter: none !important;
+    }
+
+    button:disabled:hover {
+      filter: none !important;
+    }
+
     .note {
       font-size: 12px;
       color: var(--muted);
@@ -130,6 +140,13 @@
     canvas {
       background: #ffffff;
       border-radius: 10px;
+    }
+
+    /* Fix chart height to about half the viewport */
+    #chart {
+      height: 50vh;
+      width: 100%;
+      display: block;
     }
 
     .error {
@@ -144,6 +161,20 @@
       color: var(--muted);
       padding: 0 20px 20px;
     }
+
+    .computing {
+      cursor: wait !important;
+    }
+
+    .computing *,
+    .computing *:hover {
+      cursor: wait !important;
+    }
+
+    html.computing,
+    html.computing * {
+      cursor: wait !important;
+    }
   </style>
 </head>
 
@@ -155,6 +186,9 @@
     <div class="card">
       <h2>Inputs</h2>
       <div class="content">
+        <div id="uploadName" class="note"></div>
+        <input id="upload" type="file" accept=".fa,.fasta,.fna,.txt,text/plain,.seq,.dna" style="display:none" />
+        <button id="uploadBtn">Upload FASTA/DNA</button>
         <label for="sequence">DNA sequence (A/C/G/T)</label>
         <textarea id="sequence" spellcheck="false" placeholder="Paste or type sequence here..."></textarea>
         <div class="row">
@@ -180,17 +214,18 @@
           <div></div>
         </div>
         <button id="runBtn">Run</button>
-        <button id="downloadBtn">Download CSV</button>
+        <div id="loading" style="display: none; color: #2563eb; font-weight: bold; margin: 10px 0;">
+          🔄 Computing nucleosome occupancy...
+        </div>
+        <button id="downloadBtn" disabled>Download CSV</button>
         <div id="error" class="error"></div>
-        <p class="note">Sequence is uppercased and converted U→T. Non-ACGT
-          removed.</p>
       </div>
     </div>
 
     <div class="card">
-      <h2>Occupancy</h2>
+      <h2>Output</h2>
       <div class="content">
-        <canvas id="chart" height="320"></canvas>
+        <canvas id="chart"></canvas>
       </div>
     </div>
   </div>
@@ -198,9 +233,7 @@
     genome-wide nucleosome occupancy" (<a
       href="https://doi.org/10.1073/pnas.1205659109">https://doi.org/10.1073/pnas.1205659109</a>).
 
-    Please make sure that you add enough DNA on both sides ( >1000bp of random sequence, which you may want to discard
-    later if you don't use it), to make sure that edge-effects will not dominate, unless you are particularly interested
-    in the nucleosome positioning effects of DNA ends.</div>
+    .</div>
 
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -216,9 +249,144 @@
     const elErr = document.getElementById('error');
     const ctx = document.getElementById('chart');
     const elDownload = document.getElementById('downloadBtn');
+    const elUpload = document.getElementById('upload');
+    const elLoading = document.getElementById('loading');
+    const elUploadBtn = document.getElementById('uploadBtn');
+    const elUploadName = document.getElementById('uploadName');
+
+    // Style upload as button and show filename
+    let isFileUpload = false; // Flag to track if change is from file upload
+    if (elUploadBtn && elUpload) {
+      elUploadBtn.addEventListener('click', () => elUpload.click());
+      elUpload.addEventListener('change', async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+
+        // Disable run button while loading file (but keep text as "Run")
+        elRun.disabled = true;
+        elDownload.disabled = true;
+
+        isFileUpload = true; // Set flag before changing sequence
+        let seq = '';
+        if (file.name.toLowerCase().endsWith('.dna')) {
+          // Handle SnapGene .dna files - extract sequence from binary format
+          try {
+            const arrayBuffer = await file.arrayBuffer();
+            const uint8Array = new Uint8Array(arrayBuffer);
+
+            // SnapGene .dna files have a specific structure
+            // Look for sequence data which is often stored as plain text within the binary file
+            let foundSequence = '';
+
+            // Method 1: Look for continuous stretches of A, C, G, T characters
+            let currentSequence = '';
+            for (let i = 0; i < uint8Array.length; i++) {
+              const char = String.fromCharCode(uint8Array[i]);
+              if (/[ACGTacgt]/.test(char)) {
+                currentSequence += char.toUpperCase();
+              } else {
+                // If we hit a non-DNA character, check if we have a substantial sequence
+                if (currentSequence.length > 50) { // Minimum sequence length threshold
+                  if (currentSequence.length > foundSequence.length) {
+                    foundSequence = currentSequence;
+                  }
+                }
+                currentSequence = '';
+              }
+            }
+            // Check the last sequence too
+            if (currentSequence.length > 50 && currentSequence.length > foundSequence.length) {
+              foundSequence = currentSequence;
+            }
+
+            // Method 2: If Method 1 didn't find a good sequence, try looking for length-prefixed data
+            if (foundSequence.length < 100) {
+              for (let i = 0; i < uint8Array.length - 8; i++) {
+                // Look for 4-byte length followed by sequence data
+                const len1 = (uint8Array[i] << 24) | (uint8Array[i + 1] << 16) | (uint8Array[i + 2] << 8) | uint8Array[i + 3];
+                const len2 = (uint8Array[i + 3] << 24) | (uint8Array[i + 2] << 16) | (uint8Array[i + 1] << 8) | uint8Array[i];
+
+                for (const possibleLength of [len1, len2]) {
+                  if (possibleLength > 50 && possibleLength < 1000000 && i + 4 + possibleLength <= uint8Array.length) {
+                    const candidateSeq = String.fromCharCode(...uint8Array.slice(i + 4, i + 4 + possibleLength));
+                    // Check if this looks like a DNA sequence
+                    const dnaRatio = (candidateSeq.match(/[ACGTacgt]/g) || []).length / candidateSeq.length;
+                    if (dnaRatio > 0.9 && candidateSeq.length > foundSequence.length) {
+                      foundSequence = candidateSeq.toUpperCase().replace(/[^ACGT]/g, '');
+                    }
+                  }
+                }
+              }
+            }
+
+            if (foundSequence.length > 0) {
+              seq = foundSequence;
+            } else {
+              throw new Error('Could not find sequence data in .dna file');
+            }
+
+          } catch (error) {
+            elErr.textContent = 'Error reading .dna file: ' + error.message;
+            // Restore run button on error
+            elRun.disabled = false;
+            return;
+          }
+        } else {
+          // Handle text files (FASTA, etc.)
+          const text = await file.text();
+          // Parse FASTA: remove any header lines starting with '>', keep only sequence lines
+          const lines = text.split(/\r?\n/);
+          seq = lines
+            .filter(line => line.trim() && !line.startsWith('>'))
+            .join('')
+            .toUpperCase()
+            .replace(/U/g, 'T');
+        }
+
+        elSeq.value = seq;
+        // Set filename AFTER setting sequence to avoid it being cleared by input event
+        elUploadName.textContent = file.name;
+        // Disable download until rerun
+        elDownload.setAttribute('disabled', '');
+
+        // Automatically run computation after uploading file
+        if (seq.length > 0) {
+          // Small delay to ensure UI updates, then run computation
+          setTimeout(async () => {
+            await run();
+          }, 100);
+        } else {
+          // If no sequence was loaded, re-enable run button
+          elRun.disabled = false;
+        }
+
+        isFileUpload = false; // Reset flag after upload complete
+        // Clear the file input value so the same file can be uploaded again
+        elUpload.value = '';
+      });
+      // Clear filename label if sequence edited manually (not from file upload)
+      elSeq.addEventListener('input', () => {
+        if (!isFileUpload) {
+          elUploadName.textContent = '';
+        }
+        // Disable download button when sequence changes
+        elDownload.disabled = true;
+      });
+    }
+
+    // Disable download button when any input changes
+    function disableDownload() {
+      elDownload.disabled = true;
+    }
+
+    elSeq.addEventListener('input', disableDownload);
+    elMu.addEventListener('input', disableDownload);
+    elFoot.addEventListener('input', disableDownload);
+    elAmp.addEventListener('input', disableDownload);
+    elPer.addEventListener('input', disableDownload);
 
     // Seed example
-    elSeq.value = 'CTGGGGTTATACTTTAATAGGAAGGGGGGAACAAGTATACTTACAGAGCTGTCTATATAACGGTCATGAAATTAGGGTTCACCCGAGGAAGCCCTTTTTGCGAGGCCCGTACCGAAGCCGCACCGGACTTTTGTGGGGCAGTCCTCCCATCCACATGCTGCCGGAGTTAAATCTTTCTCACTTTTCCACGCGATTGAGCACGTGGCTGGTGAATACTTTTGACTATTAGTCCTCTTTGCACATCAATTGGGGAGATTCCTGTGTTTCCAAGGTCAAAGACGAGGGTCAACCTCAAAAAGTGGAATCACACGATATAATATGTTGCAAACTAGTTGGTAAAACGTCCACTCCTGGATCGACTGGGCCTACCTATTCACCTCACTTGGTTAACTCCGTTTGGGACAGTTTCTCCTCACCCACGTCATTTGCGGTGAGAACCTACGATTTTTTCCAAGGTCGTAACTCGACGTTAACCCGGCCGAACAGCACCCAGCGCCGCTGAGACCTCAGTTAAAATTCCTATAATGGTTCGGATTCGGTCGTACGATAGTCATCGGACTAACTTTTCCTCTACGGAGTGCAGAGCTCCCCATGCCCGATAAGCAGGTAGTGATTGTACCTCAGACTGGTGTTACTCCACCCTTTGGCTATCCGCGCGTTTGAGAATCGTTCATTCGCAAACTAGTTTATGTGTCGACCGCATGCTGCAAAGTACCTAAAATGGGCTCATAACCCAACCGCAGCAGAGACATGTCCCCGAGGCTTTTGATTCAAAGGTCGGGACACTAAAGATTAATCCATCCAAACATAATGGGTAATGCCACTATGGATGTTCTTTGTTCTGAACCTCTCGGGTCGTGACTTAATGCGTCCACCTTACCATTAGTACACCATTGTCAATACAAGCACTGAGTGCTCGCCCTTCTACAGGATGTATATATCTGACACGTGCCTGGAGACTAGGGAGTAATCCCCTTGGCGGTTAAAACGCGGGGGACAGCGCGTACGTGCGTTTAAGCGGTGCTAGAGCTGTCTACGACCAATTGAGCGGCCTCGGCACCGGGATTCTCCAGATGCCGCCACTACCGACACCCCGTAACTCCTGGGAGGGTATTCAAGGGCCCTTCTGATGAATACCATTGTGCTTATTTGTGTTCCGATTTTAAGTTAGCCCGCTATCTGGACAGTAATGAAACACCAGTGGTTAACATGCCAAATTATGTATTAGCTCTCTTAGGAAGTCACGGGGGCGAGGGGGTGTAGCAGCCTATGTGGTTTTGGTCGTTCTTAGGAACGCACATTCACTGCGATCTCACAGTTCACTACGCGGTATTCGATAGAACTATGGCAGAAGTGTCCTGATCGCTGATAATTTTCCGGTTTATTGCAACGGGGAACTGTTGCTCAGGTCACGGCTAACGGTATCTTCGAAATTCGACTGTAGGTTGATCTCCGGCGATGTAGAGTTGGTTATGTAGATCCACCCTTAGAGGTTTCGCCTATGGGCCCCGTTTGCAATTTGGTTGTCACTAGGGAATGCACATTATAACAAAACCTGTCCACGGGGGGGTCCATTTAGCGCGGTTCTCATATGGCGACATATATTGGCCACTATGCGGGAATTGAAAGAGTGGCCGAAGGTAGGTCCGTTAATCCCCCGACAAAATGGTACCCGTTTCATTGCTGGCTGAGTCAGAATTAGGATAGTAGTCGATGGGTACGGTGCATTTAAGCTACCGACGCGGTCACCTGATCCCAGGCGATCACAGACAACGGCACGGGATCCGTGCAAACACAGCCTATTTCGGTCGCCATGGCCATTCACGAAGGCCCTCAACTTCTCTACAGGTTCACGGTCGATATAACCTTGCAGCGAGCCGCTTCCCACGTTCTGACACTTAGGGTATTCTTCGCGAACGGAATTGGAGCTACGGCCAGCTAGCGACGTAGGTCCGTCGAACCACTACCTACCCAACATGGAGCCGTAACATTGATCTGA'
+    elSeq.value = 'CTGGGGTTATACTTTAATAGGAAGGGGGGAACAAGTATACTTACAGAGCTGTCTATATAACGGTCATGAAATTAGGGTTCACCCGAGGAAGCCCTTTTTGCGAGGCCCGTACCGAAGCCGCACCGGACTTTTGTGGGGCAGTCCTCCCATCCACATGCTGCCGGAGTTAAATCTTTCTCACTTTTCCACGCGATTGAGCACGTGGCTGGTGAATACTTTTGACTATTAGTCCTCTTTGCACATCAATTGGGGAGATTCCTGTGTTTCCAAGGTCAAAGACGAGGGTCAACCTCAAAAAGTGGAATCACACGATATAATATGTTGCAAACTAGTTGGTAAAACGTCCACTCCTGGATCGACTGGGCCTACCTATTCACCTCACTTGGTTAACTCCGTTTGGGACAGTTTCTCCTCACCCACGTCATTTGCGGTGAGAACCTACGATTTTTTCCAAGGTCGTAACTCGACGTTAACCCGGCCGAACAGCACCCAGCGCCGCTGAGACCTCAGTTAAAATTCCTATAATGGTTCGGATTCGGTCGTACGATAGTCATCGGACTAACTTTTCCTCTACGGAGTGCAGAGCTCCCCATGCCCGATAAGCAGGTAGTGATTGTACCTCAGACTGGTGTTACTCCACCCTTTGGCTATCCGCGCGTTTGAGAATCGTTCATTCGCAAACTAGTTTATGTGTCGACCGCATGCTGCAAAGTACCTAAAATGGGCTCATAACCCAACCGCAGCAGAGACATGTCCCCGAGGCTTTTGATTCAAAGGTCGGGACACTAAAGATTAATCCATCCAAACATAATGGGTAATGCCACTATGGATGTTCTTTGTTCTGAACCTCTCGGGTCGTGACTTAATGCGTCCACCTTACCATTAGTACACCATTGTCAATACAAGCACTGAGTGCTCGCCCTTCTACAGGATGTATATATCTGACACGTGCCTGGAGACTAGGGAGTAATCCCCTTGGCGGTTAAAACGCGGGGGACAGCGCGTACGTGCGTTTAAGCGGTGCTAGAGCTGTCTACGACCAATTGAGCGGCCTCGGCACCGGGATTCTCCAGATGCCGCCACTACCGACACCCCGTAACTCCTGGGAGGGTATTCAAGGGCCCTTCTGATGAATACCATTGTGCTTATTTGTGTTCCGATTTTAAGTTAGCCCGCTATCTGGACAGTAATGAAACACCAGTGGTTAACATGCCAAATTATGTATTAGCTCTCTTAGGAAGTCACGGGGGCGAGGGGGTGTAGCAGCCTATGTGGTTTTGGTCGTTCTTAGGAACGCACATTCACTGCGATCTCACAGTTCACTACGCGGTATTCGATAGAACTATGGCAGAAGTGTCCTGATCGCTGATAATTTTCCGGTTTATTGCAACGGGGAACTGTTGCTCAGGTCACGGCTAACGGTATCTTCGAAATTCGACTGTAGGTTGATCTCCGGCGATGTAGAGTTGGTTATGTAGATCCACCCTTAGAGGTTTCGCCTATGGGCCCCGTTTGCAATTTGGTTGTCACTAGGGAATGCACATTATAACAAAACCTGTCCACGGGGGGGTCCATTTAGCGCGGTTCTCATATGGCGACATATATTGGCCACTATGCGGGAATTGAAAGAGTGGCCGAAGGTAGGTCCGTTAATCCCCCGACAAAATGGTACCCGTTTCATTGCTGGCTGAGTCAGAATTAGGATAGTAGTCGATGGGTACGGTGCATTTAAGCTACCGACGCGGTCACCTGATCCCAGGCGATCACAGACAACGGCACGGGATCCGTGCAAACACAGCCTATTTCGGTCGCCATMGCCATTCACGAAGGCCCTCAACTTCTCTACAGGTTCACGGTCGATATAACCTTGCAGCGAGCCGCTTCCCACGTTCTGACACTTAGGGTATTCTTCGCGAACGGAATTGGAGCTACGGCCAGCTAGCGACGTAGGTCCGTCGAACCACTACCTACCCAACATGGAGCCGTAACATTGATCTGA'
     let chart;
     function render(occupancy) {
       const labels = Array.from({ length: occupancy.length }, (_, i) => i);
@@ -226,7 +394,13 @@
       let interval = 100;
       if (labels.length > 10000) interval = 1000;
       else if (labels.length > 2000) interval = 500;
-      const ds = { label: 'Occupancy', data: occupancy, borderColor: '#2563eb', borderWidth: 2, pointRadius: 0 };
+      const ds = { label: 'Occupancy', data: occupancy, borderColor: '#2563eb', backgroundColor: 'rgba(37, 99, 235, 0.3)', fill: true, borderWidth: 2, pointRadius: 0 };
+      // Enable/disable download based on occupancy size
+      if (Array.isArray(occupancy) ? occupancy.length > 0 : (occupancy?.length ?? 0) > 0) {
+        elDownload.removeAttribute('disabled');
+      } else {
+        elDownload.setAttribute('disabled', '');
+      }
       if (chart) { chart.data.labels = labels; chart.data.datasets = [ds]; chart.options.scales.x.ticks.callback = (value, index) => (index % interval === 0 ? index : ''); chart.update(); return; }
       chart = new Chart(ctx, {
         type: 'line', data: { labels, datasets: [ds] },
@@ -251,7 +425,9 @@
               grid: { display: false }
             }
           },
-          plugins: { legend: { display: false } }
+          plugins: {
+            legend: { display: false }
+          }
         }
       });
     }
@@ -385,7 +561,13 @@ def CalcNucPositions(sequence: str, w: int, chemical_potential: float, amplitude
     let lastResult = null;
     async function run() {
       try {
+        // Disable both buttons and show computing state
+        elRun.disabled = true;
+        elRun.textContent = 'Computing...';
+        elDownload.disabled = true;
+        elLoading.style.display = 'block';
         elErr.textContent = '';
+
         const py = await pyReady;
         const seq = (elSeq.value || '').toString();
         const mu = parseFloat(elMu.value);
@@ -407,15 +589,44 @@ def CalcNucPositions(sequence: str, w: int, chemical_potential: float, amplitude
         const dyad = py.runPython(`res.dyad_probability.tolist()`);
         lastResult = { occupancy: occ, dyad };
         render(occ);
+
+        // Enable download button only after successful computation
+        elDownload.disabled = false;
       } catch (e) {
         console.error(e);
         elErr.textContent = String(e?.message || e);
+        // Keep download button disabled on error
+        elDownload.disabled = true;
+      } finally {
+        // Always restore run button
+        elLoading.style.display = 'none';
+        elRun.disabled = false;
+        elRun.textContent = 'Run';
+        console.log('Run function completed, buttons should be enabled');
       }
     }
 
     function downloadCSV() {
       try {
         if (!lastResult) { throw new Error('Run the model first'); }
+
+        // Determine suggested filename
+        let suggestedFilename = 'nucleosome_occupancy.csv';
+        const uploadedFilename = elUploadName.textContent.trim();
+
+        if (uploadedFilename) {
+          // Remove extension and add .csv
+          const nameWithoutExt = uploadedFilename.replace(/\.[^/.]+$/, '');
+          suggestedFilename = nameWithoutExt + '.csv';
+        }
+
+        // Ask user for filename
+        const filename = prompt('Enter filename for CSV export:', suggestedFilename);
+        if (!filename) return; // User cancelled
+
+        // Ensure filename ends with .csv
+        const finalFilename = filename.endsWith('.csv') ? filename : filename + '.csv';
+
         const len = lastResult.occupancy.length;
         const rows = ['i,occupancy,dyad_probability'];
         for (let i = 0; i < len; i++) {
@@ -427,7 +638,7 @@ def CalcNucPositions(sequence: str, w: int, chemical_potential: float, amplitude
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'nucleosome_results.csv';
+        a.download = finalFilename;
         document.body.appendChild(a);
         a.click();
         a.remove();
