@@ -1,0 +1,7 @@
+numpy
+scipy
+matplotlib
+tqdm
+snapgene_reader
+numba
+icecream
