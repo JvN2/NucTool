@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import numpy as np
+import re
 from pathlib import Path
 from snapgene_reader import snapgene_file_to_dict
 import matplotlib.pyplot as plt
@@ -8,7 +9,7 @@ from Bio import Entrez, SeqIO
 
 
 FOOTPRINT = 146
-FIGSIZE = (12, 3)
+FIGSIZE = (13, 4)
 
 _ASCII_TO_IDX = np.full(256, -1, dtype=np.int8)
 _ASCII_TO_IDX[ord("A")] = 0
@@ -24,6 +25,12 @@ class WrappingEnergyResult:
     segments: np.ndarray
 
 
+@dataclass(frozen=True)
+class MethylationResult:
+    protected: np.ndarray
+    methylated: np.ndarray
+
+
 def encode_seq(seq: str) -> np.ndarray:
     """Convert sequence string to numeric indices for vectorized computation."""
     # Convert Biopython Seq object to string if needed
@@ -32,7 +39,9 @@ def encode_seq(seq: str) -> np.ndarray:
     return _ASCII_TO_IDX[b]
 
 
-def get_weight(w: int, period: float, amplitude: float, show=False) -> np.ndarray:
+def get_weight(
+    w: int, period: float, amplitude: float, show: bool = False
+) -> np.ndarray:
     """Generate periodic dinucleotide weights to model DNA bendability."""
     x = np.arange(w, dtype=np.int32) - w // 2
     s = amplitude * np.cos(2 * np.pi * x / period)
@@ -104,7 +113,7 @@ def calc_wrapping_energy(
     end = start + len(log_weights[0, 0]) + 1
     if dyad + start < 0 or dyad + end - 1 >= len(sequence):
         return WrappingEnergyResult(
-            octamer=np.nan, tetramer=np.nan, segments=np.array(np.nan)
+            octamer=np.nan, tetramer=np.nan, segments=np.full(14, np.nan)
         )
 
     # Extract and encode sequence segment
@@ -151,12 +160,14 @@ def calc_wrapping_energy(
     )
 
 
-def compute_vanderlick(wrapping_energy: np.ndarray, mu: float, show: bool = False):
+def compute_vanderlick(
+    wrapping_energy: np.ndarray, mu: float, show: bool = False
+) -> tuple[np.ndarray, np.ndarray]:
     """Compute equilibrium dyad probability accounting for steric exclusion between nucleosomes."""
 
-    free_energy = wrapping_energy - mu
-    # fill nans with zeros
+    free_energy = wrapping_energy + mu
     free_energy = np.nan_to_num(free_energy, nan=np.nanmax(free_energy))
+    free_energy *= -1
 
     n = free_energy.size
     forward = np.zeros(n, dtype=np.float64)
@@ -200,6 +211,47 @@ def compute_vanderlick(wrapping_energy: np.ndarray, mu: float, show: bool = Fals
     return dyads, occupancy
 
 
+def sample_unwrapping(
+    sequence: str, dyad: int, weight: np.ndarray, e_contact: float = 1.0
+) -> tuple[np.ndarray, np.ndarray]:
+    e_seg = calc_wrapping_energy(sequence, dyad, log_weights=np.log(weight)).segments
+
+    states = np.arange(13).astype(int) - 6
+    e = np.concatenate(
+        (
+            np.cumsum(-e_seg[:6] - e_contact)[::-1],
+            [0],
+            np.cumsum(-e_seg[::-1][:6] - e_contact),
+        )
+    )
+
+    p = np.exp(-e)
+    p[np.isnan(p)] = 0
+    p /= p.sum()
+
+    state = np.random.choice(states, p=p)
+
+    wrapped = np.asarray([-65, 65])
+    if state < 0:
+        wrapped[0] -= state * 10
+    else:
+        wrapped[1] -= state * 10
+
+    x = np.arange(-75, 75)
+    occupancy = np.sum(
+        [
+            p[i]
+            * (
+                (x >= (-65 - state * 10 if state < 0 else -65))
+                & (x <= (65 if state < 0 else 65 - state * 10))
+            )
+            for i, state in enumerate(states)
+        ],
+        axis=0,
+    )
+    return x, occupancy
+
+
 class ChromatinFiber:
     """Simple container and utilities for a linear chromatin fiber.
 
@@ -209,30 +261,42 @@ class ChromatinFiber:
     - sample a single-molecule configuration by stochastic sampling of dyads
     """
 
-    def __init__(self):
-        """Initialize the ChromatinFiber.
+    def __init__(self) -> None:
+        self.footprint: int = FOOTPRINT
+        self.weight: np.ndarray | None = None
 
-        Parameters
-        - sequence: optional DNA sequence (string). If provided, `self.index`
-          will be created as np.arange(len(sequence)).
-        - footprint: nucleosome footprint in bp (default 146).
-        """
+        self.name: str | None = None
+        self.sequence: str | None = None
+        self.index: np.ndarray | None = None
+        self.orfs: list[dict] = []
 
-        self.footprint = FOOTPRINT
-        self.name = None
-        self.sequence = None
-        self.index = None
-        self.dyads = np.array([], dtype=int)
-        self.energy = None
-        self.occupancy = None
-        self.orfs = []
+        self.energy: np.ndarray | None = None
+        self.dyad_probability: np.ndarray | None = None
+        self.occupancy: np.ndarray | None = None
 
-    def read_dna(self, filename: str, cut_at: int = 0):
+        self.dyads: np.ndarray = np.array([], dtype=int)
+
+    def read_dna(self, filename: str, cut_at: int = 0) -> None:
         plasmid_data = snapgene_file_to_dict(filename)
         dyads = []
         for feature in plasmid_data["features"]:
             if "601" in feature["name"].lower():
+                feature["name"] = feature["name"] = "601"
                 dyads.append((feature["start"] + feature["end"]) // 2)
+
+                self.orfs.append(
+                    {
+                        "chrom_acc": f"{Path(filename)}",
+                        "chromosome": "plasmid",
+                        "end": feature["end"],
+                        "id": "-",
+                        "name": feature["name"],
+                        "raw_start": feature["start"],
+                        "raw_stop": feature["end"],
+                        "start": feature["start"],
+                        "strand": 1,
+                    }
+                )
 
         dyads.sort()
         self.dyads = np.asarray(dyads, dtype=int)
@@ -246,15 +310,77 @@ class ChromatinFiber:
             end = min(len(self.sequence), dyad + self.footprint // 2)
             self.occupancy[start:end] = 1
 
-        # if cut_at > 0:
-        #     self.sequence = self.sequence[cut_at:] + self.sequence[:cut_at]
-        #     dyads = (np.asarray(dyads) - cut_at).tolist()
-        #     dyads = [dyad + len(self.sequence) if dyad < 0 else dyad for dyad in dyads]
-        #     self.index = self.index[cut_at:].tolist() + self.index[:cut_at].tolist()
+    def fetch_orfs_by_range(
+        self,
+        chromosome: str = "",
+        start: int = 0,
+        end: int = 0,
+        organism: str = "saccharomyces cerevisiae",
+    ) -> None:
+        """Fetch ORF information for a genomic range.
 
+        Parameters
+        ----------
+        organism : str
+            Organism name (default: "saccharomyces cerevisiae")
+        chromosome : str
+            Chromosome name or accession number
+        start : int
+            Start position (1-based)
+        end : int
+            End position (1-based)
+        """
+        Entrez.email = "your.email@example.com"
+        q = f"{chromosome}[Chromosome] AND {organism}[Organism] AND {start}:{end}[CHRPOS]"
+        res = Entrez.read(Entrez.esearch(db="gene", term=q))
+        if not res.get("IdList"):
+            raise ValueError(
+                f"No ORFs found for chromosome {chromosome} in range {start}:{end}"
+            )
+
+        # Loop through all gene IDs to get ORFs on both strands
+        for gid in res["IdList"]:
+            doc = Entrez.read(Entrez.esummary(db="gene", id=gid))["DocumentSummarySet"][
+                "DocumentSummary"
+            ][0]
+            gi = doc.get("GenomicInfo", [{}])[0]
+            raw_start = int(gi.get("ChrStart", 0))
+            raw_stop = int(gi.get("ChrStop", 0))
+            orf_start = min(raw_start, raw_stop) + 1
+            orf_end = max(raw_start, raw_stop) + 1
+            # parse/normalize strand to int
+            s = gi.get("Strand")
+            try:
+                strand = (
+                    int(s) if s is not None else (-1 if raw_start > raw_stop else 1)
+                )
+            except Exception:
+                ss = str(s).lower() if s is not None else ""
+                strand = (
+                    -1
+                    if ss.startswith("m") or ss.startswith("-")
+                    else (
+                        1
+                        if ss.startswith("p") or ss.startswith("+")
+                        else (-1 if raw_start > raw_stop else 1)
+                    )
+                )
+            self.orfs.append(
+                {
+                    "name": doc.get("Name", "Unknown"),
+                    "id": gid,
+                    "chrom_acc": gi.get("ChrAccVer"),
+                    "start": orf_start,
+                    "end": orf_end,
+                    "strand": int(strand),
+                    "chromosome": doc.get("Chromosome", "Unknown"),
+                    "raw_start": raw_start,
+                    "raw_stop": raw_stop,
+                }
+            )
         return
 
-    def fetch_orf(
+    def fetch_orf_by_names(
         self, gene_names: str | list[str], organism: str = "saccharomyces cerevisiae"
     ) -> None:
         """Fetch ORF information for one or more genes.
@@ -318,9 +444,54 @@ class ChromatinFiber:
                 }
             )
 
-    def fetch_orf_sequence(
+    def fetch_sequence_by_range(
+        self,
+        chrom: str,
+        start: int,
+        end: int,
+        organism: str = "saccharomyces cerevisiae",
+    ) -> None:
+        """Fetch DNA sequence for a genomic range.
+
+        Parameters
+        ----------
+        chrom : str
+            Chromosome name (e.g., "II") or accession number
+        start : int
+            Start position (1-based)
+        end : int
+            End position (1-based)
+        organism : str
+            Organism name (default: "saccharomyces cerevisiae")
+        """
+        Entrez.email = "your.email@example.com"
+
+        # If chromosome name is provided (e.g., "II"), look up the accession from ORFs
+        chrom_acc = chrom
+        if self.orfs and not chrom.startswith("NC_"):
+            # Try to find matching chromosome in ORFs
+            for orf in self.orfs:
+                if orf.get("chromosome") == chrom:
+                    chrom_acc = orf.get("chrom_acc")
+                    break
+
+        rec = SeqIO.read(
+            Entrez.efetch(
+                db="nuccore",
+                id=chrom_acc,
+                rettype="fasta",
+                seq_start=start,
+                seq_stop=end,
+            ),
+            "fasta",
+        )
+        self.sequence = str(rec.seq)
+        self.index = np.arange(start, end + 1).astype(int)
+        self.dyads = np.array([], dtype=int)
+
+    def fetch_sequence_by_orfs(
         self, margin_upstream: int = 0, margin_downstream: int = 0
-    ) -> tuple[np.ndarray, str]:
+    ) -> None:
         Entrez.email = "your.email@example.com"
         chrom = self.orfs[0].get("chrom_acc")
         end = 0
@@ -339,19 +510,25 @@ class ChromatinFiber:
             ),
             "fasta",
         )
-        self.sequence = rec.seq
+        self.sequence = str(rec.seq)
         self.index = np.arange(start, end + 1).astype(int)
         self.dyads = np.array([], dtype=int)
 
     def calc_energy_landscape(
-        self, octamer=True, period=10.0, amplitude=0.2, chemical_potential=-3.0
-    ):
-        weight = get_weight(FOOTPRINT, period=period, amplitude=amplitude, show=False)
+        self,
+        octamer: bool = True,
+        period: float = 10.0,
+        amplitude: float = 0.2,
+        chemical_potential: float = -3.0,
+    ) -> None:
+        self.weight = get_weight(
+            FOOTPRINT, period=period, amplitude=amplitude, show=False
+        )
         if octamer:
             self.energy = np.asarray(
                 [
                     calc_wrapping_energy(
-                        self.sequence, i, log_weights=np.log(weight)
+                        self.sequence, i, log_weights=np.log(self.weight)
                     ).octamer
                     for i in range(len(self.sequence))
                 ]
@@ -360,7 +537,7 @@ class ChromatinFiber:
             self.energy = np.asarray(
                 [
                     calc_wrapping_energy(
-                        self.sequence, i, log_weights=np.log(weight)
+                        self.sequence, i, log_weights=np.log(self.weight)
                     ).tetramer
                     for i in range(len(self.sequence))
                 ]
@@ -370,12 +547,78 @@ class ChromatinFiber:
             self.energy, mu=chemical_potential, show=False
         )
 
+    def sample_fiber_configuration(self) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Stochastically sample a single nucleosome arrangement to generate ensemble statistics.
+        Edge regions are excluded to prevent boundary artifacts from biasing occupancy.
+        """
+        dyads = []
+        occupancy = np.zeros_like(self.dyad_probability)
+
+        p = self.dyad_probability.copy()
+        p[np.isnan(p)] = 0
+        num_nucleosomes = np.random.poisson(lam=np.sum(p))
+
+        half_footprint = self.footprint // 2
+        seq_length = len(self.dyad_probability)
+
+        for _ in range(int(num_nucleosomes)):
+            dyads.append(np.random.choice(seq_length, p=p / p.sum()))
+
+            nuc_start = dyads[-1] - half_footprint
+            nuc_end = nuc_start + self.footprint
+
+            p[nuc_start:nuc_end] = 0
+            occupancy[nuc_start:nuc_end] = 1
+
+        dyads = np.sort(np.asarray(dyads))
+        dyads += self.index[0]
+
+        return dyads, occupancy
+
+    def calc_methylation(
+        self,
+        dyads: np.ndarray | list[int],
+        e_contact: float = -1.0,
+        motifs: list[str] = ["A"],
+        strand: str = "both",
+        efficiency: float = 0.85,
+    ) -> MethylationResult:
+
+        methylation_targets = np.zeros(len(self.sequence), dtype=int)
+        for motif in motifs:
+            offset = 1 if motif == "GC" else 0
+            if strand in ["both", "forward", "+"]:
+                for match in re.finditer(motif, self.sequence):
+                    methylation_targets[match.start() + offset] = 1
+            if strand in ["both", "reverse", "-"]:
+                rev_motif = motif[::-1].translate(str.maketrans("ACGT", "TGCA"))
+                for match in re.finditer(rev_motif, self.sequence):
+                    methylation_targets[match.start() + offset] = 1
+
+        protected = np.zeros(len(self.sequence)).astype(np.float64)
+        for dyad in dyads:
+            x, occupancy = sample_unwrapping(
+                self.sequence, dyad - self.index[0], self.weight, e_contact=e_contact
+            )
+            protected[x + dyad - self.index[0]] += occupancy
+
+        protected = np.clip(protected, 0, 1)
+        p_methylated = (1 - protected) * methylation_targets * efficiency
+        methylated = np.random.binomial(1, p_methylated).astype(float)
+
+        # remove non-target bases from methylation array
+        methylated[methylation_targets == 0] = np.nan
+
+        # return float array (with NaN for non-targets) to avoid invalid cast warnings
+        return MethylationResult(protected, methylated)
+
 
 class SequencePlotter:
-    def __init__(self):
-        self.figure_counter = 1
-        self.fig_size = FIGSIZE
-        self.font_size = 14
+    def __init__(self) -> None:
+        self.figure_counter: int = 1
+        self.fig_size: tuple[int, int] = FIGSIZE
+        self.font_size: int = 14
 
         plt.rcParams["font.family"] = "serif"
         plt.rcParams.update({"axes.titlesize": self.font_size})
@@ -404,7 +647,7 @@ class SequencePlotter:
         self,
         fiber: ChromatinFiber,
         occupancy: bool = True,
-        dyads: bool = True,
+        dyads: bool | np.ndarray = True,
         orfs: bool = False,
         energy: bool = False,
     ) -> None:
@@ -415,35 +658,47 @@ class SequencePlotter:
         plt.xlim(min(fiber.index), max(fiber.index))
         plt.ylim(-0.1, 1.1)
         plt.tight_layout()
+        plt.subplots_adjust(right=0.94)
 
-        if occupancy and fiber.occupancy is not None:
+        if isinstance(occupancy, bool) and fiber.occupancy is not None:
             plt.fill_between(fiber.index, fiber.occupancy, color="blue", alpha=0.3)
+        elif isinstance(occupancy, np.ndarray):
+            plt.fill_between(fiber.index, occupancy, color="blue", alpha=0.3)
 
-        if dyads:
-            for d in fiber.dyads:
-                plt.axvline(x=d, color="grey", linestyle="--", alpha=0.7)
+        if isinstance(dyads, bool):
+            if dyads:
+                for d in fiber.dyads:
+                    plt.axvline(x=d, ymin=0, color="grey", linestyle="--", alpha=0.7)
+        else:
+            for d in dyads:
+                plt.axvline(x=d, ymin=0, color="grey", linestyle="--", alpha=0.7)
 
         if orfs:
             for orf in fiber.orfs:
+                name = orf["name"]
+                if orf["strand"] == -1:
+                    name = f"< {name}"
+                    top = 0
+                    bottom = -0.1
+                else:
+                    name = f"{name} >"
+                    top = 0
+                    bottom = -0.1
+
                 start = min(orf["start"], orf["end"])
                 end = max(orf["start"], orf["end"])
                 plt.fill_between(
                     [start, end],
-                    -0.1,
-                    0,
+                    bottom,
+                    top,
                     color="blue",
                     alpha=0.5,
                     label=orf["name"],
                 )
-                name = orf["name"]
-                if orf["strand"] == -1:
-                    name = f"< {name}"
-                elif orf["strand"] == 1:
-                    name = f"{name} >"
 
                 plt.text(
                     (start + end) / 2,
-                    -0.05,
+                    -0.06,
                     name,
                     ha="center",
                     va="center",
@@ -454,15 +709,16 @@ class SequencePlotter:
                 )
 
         if energy and fiber.energy is not None:
-            plt.twinx()
-            plt.plot(fiber.index, fiber.energy, color="red", linewidth=0.5)
-            plt.ylabel("energy", color="red")
-            plt.ylim(np.nanmin(fiber.energy), np.nanmax(fiber.energy))
-            plt.tick_params(axis="y", labelcolor="red")
-            plt.yticks(fontsize=7)
-            plt.grid(False)
-
-        plt.show()
+            ax1 = plt.gca()  # Get current axis (left y-axis)
+            ax2 = plt.twinx()
+            ax2.plot(fiber.index, fiber.energy, color="red", linewidth=0.5)
+            ax2.set_ylabel(
+                "energy (k$_B$T)", rotation=270, labelpad=18, loc="center", color="red"
+            )
+            ax2.set_ylim(np.nanmin(fiber.energy) * 1.3, np.nanmax(fiber.energy) * 2.6)
+            ax2.tick_params(axis="y", labelcolor="red")
+            ax2.grid(False)
+            plt.sca(ax1)  # Make left y-axis active again
 
     def save_figure(self, filename: str) -> None:
         plt.savefig(
@@ -471,21 +727,54 @@ class SequencePlotter:
 
 
 if __name__ == "__main__":
-    cf = ChromatinFiber()
+    fiber = ChromatinFiber()
     plotter = SequencePlotter()
 
-    # cf.read_dna(r"data/S_CP115_pUC18 (Amp) 16x167.dna", 1300)
-    # plotter.plot(cf)
+    fiber.read_dna(r"data/S_CP115_pUC18 (Amp) 16x167.dna", 1300)
+    # plotter.plot(fiber)
+    # plt.show()
 
-    cf.fetch_orf(["GAL10", "GAL1"])
-    cf.fetch_orf_sequence(margin_upstream=1000, margin_downstream=1000)
+    # fiber.fetch_orf_by_names(["GAL10", "GAL1"])
+    # fiber.fetch_sequence_by_orfs(margin_upstream=1000, margin_downstream=1000)
 
     # plotter.plot(cf, occupancy=True, dyads=False, orfs=True)
 
     # get_weight(FOOTPRINT, period=10.1, amplitude=0.2, show=True)
-    cf.calc_energy_landscape(
-        octamer=True, period=10.0, amplitude=0.2, chemical_potential=-12.0
+
+    fiber.orfs.clear()
+    fiber.fetch_orfs_by_range("II", 273_253, 284_607)
+    fiber.fetch_sequence_by_range("II", 273_253, 284_607)
+    # fiber.fetch_sequence_by_range("II", 277_900, 280_000)
+    # cf.fetch_orf_sequence(margin_upstream=2000, margin_downstream=2000)
+
+    fiber.calc_energy_landscape(
+        octamer=True, period=10.0, amplitude=0.05, chemical_potential=3.5
     )
-    plotter.plot(cf, occupancy=True, dyads=False, orfs=True, energy=True)
+
+    dyads_sampled, occupancy_sampled = fiber.sample_fiber_configuration()
+
+    plotter.plot(fiber, occupancy=True, dyads=dyads_sampled, orfs=True, energy=True)
+
+    methylation = fiber.calc_methylation(
+        dyads=dyads_sampled,
+        e_contact=-0.6,
+        motifs=["A"],
+        strand="both",
+        efficiency=0.85,
+    )
+
+    plotter.plot(fiber, occupancy=True, dyads=False, orfs=True)
+    plt.plot(fiber.index, methylation.protected, label="Protected", color="blue")
+
+    plt.plot(
+        fiber.index,
+        methylation.methylated,
+        label="Methylated",
+        color="green",
+        linestyle="none",
+        marker="o",
+        markersize=2,
+        alpha=0.4,
+    )
 
     plt.show()
