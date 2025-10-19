@@ -601,7 +601,7 @@ class ChromatinFiber:
             x, occupancy = sample_unwrapping(
                 self.sequence, dyad - self.index[0], self.weight, e_contact=e_contact
             )
-            protected[x + dyad - self.index[0]] += occupancy
+            protected[x + dyad - self.index[0] - 1] += occupancy
 
         protected = np.clip(protected, 0, 1)
         p_methylated = (1 - protected) * methylation_targets * efficiency
@@ -748,7 +748,7 @@ if __name__ == "__main__":
     # cf.fetch_orf_sequence(margin_upstream=2000, margin_downstream=2000)
 
     fiber.calc_energy_landscape(
-        octamer=True, period=10.0, amplitude=0.05, chemical_potential=3.5
+        octamer=True, period=10.0, amplitude=0.05, chemical_potential=1.5
     )
 
     dyads_sampled, occupancy_sampled = fiber.sample_fiber_configuration()
@@ -763,7 +763,6 @@ if __name__ == "__main__":
         efficiency=0.85,
     )
 
-    plotter.plot(fiber, occupancy=True, dyads=False, orfs=True)
     plt.plot(fiber.index, methylation.protected, label="Protected", color="blue")
 
     plt.plot(
@@ -776,5 +775,21 @@ if __name__ == "__main__":
         markersize=2,
         alpha=0.4,
     )
+
+    n = 100
+    mean_protected = np.zeros(len(fiber.sequence))
+    for _ in range(n):
+        dyads_sampled, occupancy_sampled = fiber.sample_fiber_configuration()
+        methylation = fiber.calc_methylation(
+            dyads=dyads_sampled,
+            e_contact=-0.6,
+            motifs=["A"],
+            strand="both",
+            efficiency=0.85,
+        )
+        mean_protected += methylation.protected
+    mean_protected /= n
+
+    plt.plot(fiber.index, mean_protected, label="Mean Protected", color="green")
 
     plt.show()
