@@ -5,3 +5,5 @@ tqdm
 snapgene_reader
 numba
 icecream
+genomepy
+biopython

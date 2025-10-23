@@ -1,11 +1,18 @@
 from dataclasses import dataclass
 import numpy as np
+import pandas as pd
 import re
 from pathlib import Path
 from snapgene_reader import snapgene_file_to_dict
 import matplotlib.pyplot as plt
 from icecream import ic
 from Bio import Entrez, SeqIO
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+import matplotlib.patches as mpatches
+from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
 
 
 FOOTPRINT = 146
@@ -29,6 +36,122 @@ class WrappingEnergyResult:
 class MethylationResult:
     protected: np.ndarray
     methylated: np.ndarray
+
+
+def plot_footprints(methylated, index, minimal_footprint=10):
+    def create_cmap(crange=(0, 250)):
+        colors = [
+            (0, "white"),
+            (10, "whitesmoke"),
+            (30, "magenta"),
+            (45, "blue"),
+            (55, "blue"),
+            (90, "cyan"),
+            (100, "cyan"),
+            (132, "lime"),
+            (180, "limegreen"),
+            (250, "darkgreen"),
+        ]
+        colors = [(x / colors[-1][0], c) for x, c in colors]
+
+        # Define the new colors
+        norm = mcolors.Normalize(vmin=crange[0], vmax=crange[1])
+        cmap = mcolors.LinearSegmentedColormap.from_list(
+            name="Sterachis", colors=colors, N=250  # Number of color steps
+        )
+        return cmap
+
+    def plot_box(ax, xmin, xmax, ymin, ymax, color, alpha=1):
+        rectangle = mpatches.Rectangle(
+            (xmin, ymin), xmax - xmin, ymax - ymin, facecolor=color, alpha=alpha
+        )
+        ax.add_patch(rectangle)
+        ax.patch.set_zorder(2)
+
+    def convert_to_footprints(methylated, index, minimal_footprint=10):
+        footprints = []
+        idx = np.asarray(index)
+        for read_id, trace in enumerate(methylated):
+            methylations = idx[np.flatnonzero(np.asarray(trace) == 1)]
+
+            for start, end in zip(methylations[:-1], methylations[1:]):
+                footprints.append(
+                    [int(read_id), int(start), int(end), int(end - start)]
+                )
+
+        if footprints:
+            df = pd.DataFrame.from_records(
+                footprints, columns=["read_id", "start", "end", "width"]
+            )
+        else:
+            df = pd.DataFrame(columns=["read_id", "start", "end", "width"])
+
+        return df[df["width"] >= minimal_footprint]
+
+    ax = plt.gca()
+    cmap = create_cmap()
+
+    footprints = convert_to_footprints(methylated, index, minimal_footprint)
+    ids = footprints["read_id"].unique()
+    xlim = (index[0], index[-1])
+
+    plt.hlines(ids, color="lightgrey", *xlim, zorder=1)
+    norm = Normalize(0, 250)
+    sm = ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    crange = (-10, 250)
+
+    for i, id in tqdm(enumerate(ids), desc="Plotting footprints"):
+        for _, row in footprints[footprints["read_id"] == id].iterrows():
+            plot_box(
+                ax,
+                row["start"],
+                row["end"],
+                i - 0.3,
+                i + 0.3,
+                cmap(norm(np.clip(row["width"], *crange))),
+            )
+
+    plt.xlim(xlim)
+    plt.ylim(-0.5, len(methylated) + 0.5)
+
+    plt.yticks([])
+    plt.box(False)
+    plt.gca().spines["left"].set_visible(False)
+    plt.xlabel("i (bp)")
+
+    norm = mcolors.Normalize(vmin=0, vmax=250)
+    sm = ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    plt.colorbar(sm, ax=ax, ticks=np.linspace(0, 250, 6))
+    plt.gcf().set_size_inches(14.5, 3)
+
+    plt.show()
+
+
+def convert_to_footprints(methylated, index, minimal_footprint=10):
+    footprints = []
+    idx = np.asarray(index)
+
+    for read_id, trace in enumerate(methylated):
+        methylations = idx[np.flatnonzero(np.asarray(trace) == 1)]
+
+        lengths = np.diff(methylations)
+
+        starts = methylations[:-1]
+        ends = methylations[1:]
+
+        for start, end in zip(starts, ends):
+            footprints.append([int(read_id), int(start), int(end), int(end - start)])
+
+    if footprints:
+        df = pd.DataFrame.from_records(
+            footprints, columns=["read_id", "start", "end", "width"]
+        )
+    else:
+        df = pd.DataFrame(columns=["read_id", "start", "end", "width"])
+
+    return df[df["width"] >= minimal_footprint]
 
 
 def encode_seq(seq: str) -> np.ndarray:
@@ -249,6 +372,7 @@ def sample_unwrapping(
         ],
         axis=0,
     )
+
     return x, occupancy
 
 
@@ -261,13 +385,20 @@ class ChromatinFiber:
     - sample a single-molecule configuration by stochastic sampling of dyads
     """
 
-    def __init__(self) -> None:
+    def __init__(self, sequence=None, start=0) -> None:
         self.footprint: int = FOOTPRINT
         self.weight: np.ndarray | None = None
 
         self.name: str | None = None
-        self.sequence: str | None = None
-        self.index: np.ndarray | None = None
+        if sequence is not None:
+            # Accept Biopython Seq, Python str, numpy array, or similar.
+            seq_str = str(sequence)
+            # normalize to uppercase string for downstream processing
+            self.sequence = seq_str.upper()
+            self.index = np.arange(len(self.sequence), dtype=int) + start
+        else:
+            self.sequence: str | None = None
+            self.index: np.ndarray | None = None
         self.orfs: list[dict] = []
 
         self.energy: np.ndarray | None = None
@@ -650,6 +781,7 @@ class SequencePlotter:
         dyads: bool | np.ndarray = True,
         orfs: bool = False,
         energy: bool = False,
+        methylation: bool = False,
     ) -> None:
 
         plt.figure(figsize=(12, 2))
@@ -720,6 +852,11 @@ class SequencePlotter:
             ax2.grid(False)
             plt.sca(ax1)  # Make left y-axis active again
 
+        if isinstance(methylation, np.ndarray):
+            plt.plot(
+                fiber.index, methylation, "o", color="green", markersize=2, alpha=0.5
+            )
+
     def save_figure(self, filename: str) -> None:
         plt.savefig(
             f"figures/figure_{self.figure_counter}.png", dpi=300, bbox_inches="tight"
@@ -734,18 +871,28 @@ if __name__ == "__main__":
     # plotter.plot(fiber)
     # plt.show()
 
-    # fiber.fetch_orf_by_names(["GAL10", "GAL1"])
-    # fiber.fetch_sequence_by_orfs(margin_upstream=1000, margin_downstream=1000)
+    fiber.orfs.clear()
+    fiber.fetch_orf_by_names(
+        ["GAL7", "GAL10", "FUR4", "GAL1"], organism="saccharomyces cerevisiae"
+    )
+
+    handle = 2000
+    fiber.fetch_orfs_by_range(
+        fiber.orfs[0]["chromosome"],
+        fiber.orfs[0]["start"] - handle,
+        fiber.orfs[0]["end"] + handle,
+    )
+
+    fiber.fetch_sequence_by_orfs(margin_upstream=1000, margin_downstream=1000)
 
     # plotter.plot(cf, occupancy=True, dyads=False, orfs=True)
 
     # get_weight(FOOTPRINT, period=10.1, amplitude=0.2, show=True)
 
-    fiber.orfs.clear()
-    fiber.fetch_orfs_by_range("II", 273_253, 284_607)
-    fiber.fetch_sequence_by_range("II", 273_253, 284_607)
+    # fiber.fetch_orfs_by_range("II", 273_253, 284_607)
+    # fiber.fetch_sequence_by_range("II", 273_253, 284_607)
     # fiber.fetch_sequence_by_range("II", 277_900, 280_000)
-    # cf.fetch_orf_sequence(margin_upstream=2000, margin_downstream=2000)
+    # fiber.fetch_sequence_by_orfs(margin_upstream=2000, margin_downstream=2000)
 
     fiber.calc_energy_landscape(
         octamer=True, period=10.0, amplitude=0.05, chemical_potential=1.5
