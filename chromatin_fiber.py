@@ -38,7 +38,7 @@ class MethylationResult:
     methylated: np.ndarray
 
 
-def plot_footprints(methylated, index, minimal_footprint=10):
+def plot_footprints(footprints, index):
     def create_cmap(crange=(0, 250)):
         colors = [
             (0, "white"),
@@ -68,30 +68,9 @@ def plot_footprints(methylated, index, minimal_footprint=10):
         ax.add_patch(rectangle)
         ax.patch.set_zorder(2)
 
-    def convert_to_footprints(methylated, index, minimal_footprint=10):
-        footprints = []
-        idx = np.asarray(index)
-        for read_id, trace in enumerate(methylated):
-            methylations = idx[np.flatnonzero(np.asarray(trace) == 1)]
-
-            for start, end in zip(methylations[:-1], methylations[1:]):
-                footprints.append(
-                    [int(read_id), int(start), int(end), int(end - start)]
-                )
-
-        if footprints:
-            df = pd.DataFrame.from_records(
-                footprints, columns=["read_id", "start", "end", "width"]
-            )
-        else:
-            df = pd.DataFrame(columns=["read_id", "start", "end", "width"])
-
-        return df[df["width"] >= minimal_footprint]
-
     ax = plt.gca()
     cmap = create_cmap()
 
-    footprints = convert_to_footprints(methylated, index, minimal_footprint)
     ids = footprints["read_id"].unique()
     xlim = (index[0], index[-1])
 
@@ -113,7 +92,7 @@ def plot_footprints(methylated, index, minimal_footprint=10):
             )
 
     plt.xlim(xlim)
-    plt.ylim(-0.5, len(methylated) + 0.5)
+    plt.ylim(-0.5, len(ids) + 0.5)
 
     plt.yticks([])
     plt.box(False)
@@ -127,6 +106,7 @@ def plot_footprints(methylated, index, minimal_footprint=10):
     plt.gcf().set_size_inches(14.5, 3)
 
     plt.show()
+    return
 
 
 def convert_to_footprints(methylated, index, minimal_footprint=10):
