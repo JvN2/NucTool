@@ -1,5 +1,5 @@
 import numpy as np
-from chromatin_fiber import ChromatinFiber
+from ChromatinFibers import ChromatinFiber
 
 
 def test_occupancy_basic():
