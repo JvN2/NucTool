@@ -39,7 +39,7 @@ class MethylationResult:
     methylated: np.ndarray
 
 
-def plot_footprints(footprints, index):
+def plot_footprints(footprints, index, n_max=None):
     def create_cmap(crange=(0, 250)):
         colors = [
             (0, "white"),
@@ -73,6 +73,10 @@ def plot_footprints(footprints, index):
     cmap = create_cmap()
 
     ids = footprints["read_id"].unique()
+
+    if n_max is not None and len(ids) > n_max:
+        ids = ids[np.random.choice(len(ids), n_max, replace=False)]
+
     xlim = (index[0], index[-1])
 
     plt.hlines(ids, color="lightgrey", *xlim, zorder=1)
@@ -106,7 +110,7 @@ def plot_footprints(footprints, index):
     plt.colorbar(sm, ax=ax, ticks=np.linspace(0, 250, 6))
     plt.gcf().set_size_inches(14.5, 3)
 
-    plt.show()
+    # plt.show()
     return
 
 
@@ -269,6 +273,7 @@ def compute_vanderlick(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute equilibrium dyad probability accounting for steric exclusion between nucleosomes."""
 
+    footprint = FOOTPRINT
     free_energy = wrapping_energy + mu
     free_energy = np.nan_to_num(free_energy, nan=np.nanmax(free_energy))
     free_energy *= -1
@@ -279,21 +284,21 @@ def compute_vanderlick(
     for i in range(n):
         forward[i] = np.exp(free_energy[i] - sum_prev)
         sum_prev += forward[i]
-        if i >= FOOTPRINT:
-            sum_prev -= forward[i - FOOTPRINT]
+        if i >= footprint:
+            sum_prev -= forward[i - footprint]
     backward = np.zeros(n, dtype=np.float64)
     r_forward = forward[::-1]
     sum_prod = 0.0
     for i in range(n):
         backward[i] = 1.0 - sum_prod
         sum_prod += r_forward[i] * backward[i]
-        if i >= FOOTPRINT:
-            sum_prod -= r_forward[i - FOOTPRINT] * backward[i - FOOTPRINT]
+        if i >= footprint:
+            sum_prod -= r_forward[i - footprint] * backward[i - footprint]
     dyads = forward * backward[::-1]
     dyads = np.clip(dyads, 0, np.inf)
     dyads[np.isnan(wrapping_energy)] = 0
 
-    occupancy = np.convolve(dyads, np.ones(FOOTPRINT, dtype=np.float64), mode="same")
+    occupancy = np.convolve(dyads, np.ones(footprint, dtype=np.float64), mode="same")
     occupancy = np.clip(occupancy, 0, 1)
 
     if show:
@@ -747,28 +752,25 @@ class ChromatinFiber:
             raise ValueError("Index must be initialized before sampling configuration")
 
         dyads = []
-        occupancy = np.zeros_like(self.dyad_probability)
 
         p = self.dyad_probability.copy()
         p[np.isnan(p)] = 0
-        num_nucleosomes = np.random.poisson(lam=np.sum(p))
 
-        half_footprint = self.footprint // 2
+        num_nucleosomes = np.random.poisson(lam=np.sum(p))
         seq_length = len(self.dyad_probability)
 
         for _ in range(int(num_nucleosomes)):
+            if np.sum(p) == 0:
+                break
             dyads.append(np.random.choice(seq_length, p=p / p.sum()))
-
-            nuc_start = dyads[-1] - half_footprint
-            nuc_end = nuc_start + self.footprint
-
+            nuc_start = max(0, dyads[-1] - self.footprint)
+            nuc_end = min(nuc_start + self.footprint * 2, seq_length - 1)
             p[nuc_start:nuc_end] = 0
-            occupancy[nuc_start:nuc_end] = 1
 
         dyads = np.sort(np.asarray(dyads))
         dyads += self.index[0]
 
-        return dyads, occupancy
+        return dyads
 
     def calc_methylation(
         self,
@@ -805,7 +807,11 @@ class ChromatinFiber:
         protected = np.zeros(len(self.sequence)).astype(np.float64)
         for dyad in dyads:
             x, occupancy = sample_unwrapping(
-                self.sequence, dyad - self.index[0], self.weight, e_contact=e_contact
+                self.sequence,
+                dyad - self.index[0],
+                self.weight,
+                e_contact=e_contact,
+                steric_exclusion=steric_exclusion,
             )
             protected[x + dyad - self.index[0] - 1] += occupancy
 
@@ -818,6 +824,13 @@ class ChromatinFiber:
 
         # return float array (with NaN for non-targets) to avoid invalid cast warnings
         return MethylationResult(protected, methylated)
+
+    def encode_methylations(self, methylated: np.ndarray) -> str:
+        encoded_sequence = [
+            base.upper() if methylated[i] == 1 else base.lower()
+            for i, base in enumerate(self.sequence)
+        ]
+        return "".join(encoded_sequence)
 
 
 class SequencePlotter:
@@ -938,6 +951,23 @@ class SequencePlotter:
         )
 
 
+def simulate_chromatin_fibers(n_samples: int = 1000, length: int = 10_000) -> None:
+
+    dyads_data = []
+    methylated_sequences = []
+    for _ in tqdm(range(n_samples)):
+
+        sequence = "".join(np.random.choice(list("ACGT"), size=length))
+        fiber = ChromatinFiber(sequence=sequence)
+        fiber.calc_energy_landscape(octamer=True, amplitude=0.1, chemical_potential=1)
+        dyads = fiber.sample_fiber_configuration()
+        methylation = fiber.calc_methylation(dyads)
+
+        dyads_data.append(dyads)
+        methylated_sequences.append(fiber.encode_methylations(methylation.methylated))
+    return dyads_data, methylated_sequences
+
+
 if __name__ == "__main__":
     if False:
         fiber = ChromatinFiber()
@@ -1021,16 +1051,22 @@ if __name__ == "__main__":
     fiber = ChromatinFiber()
     fiber.read_dna(r"data/S_CP115_pUC18 (Amp) 16x167.dna", 1300)
 
-    fiber.calc_energy_landscape(octamer=False, amplitude=0.1, chemical_potential=10)
+    fiber.calc_energy_landscape(octamer=False, amplitude=0.1, chemical_potential=1)
 
-    molecule = fiber.sample_fiber_configuration()
-    methylation = fiber.calc_methylation(molecule[0])
+    dyads = fiber.sample_fiber_configuration()
 
-    plotter = SequencePlotter()
-    plotter.plot(
-        fiber,
-        occupancy=methylation.protected,
-        energy=True,
-        methylation=methylation.methylated,
-    )
-    plt.show()
+    methylation = fiber.calc_methylation(dyads, steric_exclusion=10)
+
+    # plotter = SequencePlotter()
+    # plotter.plot(
+    #     fiber,
+    #     occupancy=methylation.protected,
+    #     energy=False,
+    #     methylation=methylation.methylated,
+    #     dyads=dyads,
+    # )
+    # plt.show()
+
+    x, y = simulate_chromatin_fibers(n_samples=10, length=5000)
+    print(x[0])
+    print(y[0])
