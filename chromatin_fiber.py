@@ -13,6 +13,7 @@ from tqdm import tqdm
 import matplotlib.patches as mpatches
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
+import genomepy
 
 
 FOOTPRINT = 146
@@ -315,8 +316,14 @@ def compute_vanderlick(
 
 
 def sample_unwrapping(
-    sequence: str, dyad: int, weight: np.ndarray, e_contact: float = 1.0
+    sequence: str,
+    dyad: int,
+    weight: np.ndarray,
+    e_contact: float = 1.0,
+    steric_exclusion: int = 7,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Sample unwrapping states around a nucleosome dyad."""
+
     e_seg = calc_wrapping_energy(sequence, dyad, log_weights=np.log(weight)).segments
 
     states = np.arange(13).astype(int) - 6
@@ -332,14 +339,6 @@ def sample_unwrapping(
     p[np.isnan(p)] = 0
     p /= p.sum()
 
-    state = np.random.choice(states, p=p)
-
-    wrapped = np.asarray([-65, 65])
-    if state < 0:
-        wrapped[0] -= state * 10
-    else:
-        wrapped[1] -= state * 10
-
     x = np.arange(-75, 75)
     occupancy = np.sum(
         [
@@ -352,8 +351,85 @@ def sample_unwrapping(
         ],
         axis=0,
     )
+    if steric_exclusion > 0:
+        occupancy = np.concatenate(
+            (
+                occupancy[steric_exclusion:75],
+                np.ones(steric_exclusion * 2),
+                occupancy[75:-steric_exclusion],
+            )
+        )
 
     return x, occupancy
+
+
+def fetch_chromosome_sequence(filename, chromosome="II"):
+    """Return the sequence for `chromosome` from a multi-record FASTA.
+    If the FASTA is missing and genomepy is available, attempt to download the sacCer3 genome into the
+    parent directory of `filename` (so filename should point to the expected .fa path).
+    """
+    filename = Path(filename)
+
+    ic(str(filename.parent))
+    # install genome into the parent dir if the FASTA is missing
+    if not filename.exists():
+        genomepy.install_genome(
+            "sacCer3", "UCSC", genomes_dir=str(filename.parent.parent)
+        )
+
+    records = list(SeqIO.parse(str(filename), "fasta"))
+    if not records:
+        raise FileNotFoundError(f"No records in {filename}")
+
+    # Map common Roman numerals to Arabic to broaden matching
+    roman_to_arabic = {
+        "i": "1",
+        "ii": "2",
+        "iii": "3",
+        "iv": "4",
+        "v": "5",
+        "vi": "6",
+        "vii": "7",
+        "viii": "8",
+        "ix": "9",
+        "x": "10",
+    }
+    arabic_to_roman = {v: k for k, v in roman_to_arabic.items()}
+
+    s = str(chromosome).lower().strip()
+    s = s.lstrip("chr").lstrip("chromosome").strip(" _-")
+    candidates = {s}
+    # if s is roman, add arabic; if arabic, add roman
+    if s in roman_to_arabic:
+        candidates.add(roman_to_arabic[s])
+    if s in arabic_to_roman:
+        candidates.add(arabic_to_roman[s])
+    # also try plain digits without leading zeros
+    if s.isdigit():
+        candidates.add(str(int(s)))
+
+    alt = "|".join(re.escape(x) for x in sorted(candidates, key=lambda t: -len(t)))
+    pat = re.compile(
+        rf"(chr(?:omosome)?[ _-]?(?:{alt})|chromosome[ _-]?(?:{alt})|\b(?:{alt})\b)",
+        re.I,
+    )
+
+    # choose the first record that matches our pattern, otherwise fall back to the first record
+    record = next(
+        (r for r in records if pat.search(r.id + " " + r.description)), records[0]
+    )
+    print(f"Selected record: {record.id}  len={len(record.seq)}")
+
+    # list all ORFs in the record
+    for feature in record.features:
+        ic(feature)
+        # if feature.type == "gene":
+        #     print(
+        #         f"ORF: {feature.qualifiers.get('gene', ['-'])[0]} "
+        #         f"{feature.location.start + 1}-{feature.location.end} "
+        #         f"strand={feature.location.strand}"
+        #     )
+    return record.seq
 
 
 class ChromatinFiber:
@@ -663,6 +739,13 @@ class ChromatinFiber:
         Stochastically sample a single nucleosome arrangement to generate ensemble statistics.
         Edge regions are excluded to prevent boundary artifacts from biasing occupancy.
         """
+        if self.dyad_probability is None:
+            raise ValueError(
+                "Dyad probability must be calculated before sampling configuration"
+            )
+        if self.index is None:
+            raise ValueError("Index must be initialized before sampling configuration")
+
         dyads = []
         occupancy = np.zeros_like(self.dyad_probability)
 
@@ -694,7 +777,19 @@ class ChromatinFiber:
         motifs: list[str] = ["A"],
         strand: str = "both",
         efficiency: float = 0.85,
+        steric_exclusion: int = 7,
     ) -> MethylationResult:
+
+        if self.sequence is None:
+            raise ValueError(
+                "Sequence must be initialized before calculating methylation"
+            )
+        if self.weight is None:
+            raise ValueError(
+                "Weight must be initialized before calculating methylation"
+            )
+        if self.index is None:
+            raise ValueError("Index must be initialized before calculating methylation")
 
         methylation_targets = np.zeros(len(self.sequence), dtype=int)
         for motif in motifs:
@@ -844,69 +939,46 @@ class SequencePlotter:
 
 
 if __name__ == "__main__":
-    fiber = ChromatinFiber()
-    plotter = SequencePlotter()
+    if False:
+        fiber = ChromatinFiber()
+        plotter = SequencePlotter()
 
-    fiber.read_dna(r"data/S_CP115_pUC18 (Amp) 16x167.dna", 1300)
-    # plotter.plot(fiber)
-    # plt.show()
+        fiber.read_dna(r"data/S_CP115_pUC18 (Amp) 16x167.dna", 1300)
+        # plotter.plot(fiber)
+        # plt.show()
 
-    fiber.orfs.clear()
-    fiber.fetch_orf_by_names(
-        ["GAL7", "GAL10", "FUR4", "GAL1"], organism="saccharomyces cerevisiae"
-    )
+        fiber.orfs.clear()
+        fiber.fetch_orf_by_names(
+            ["GAL7", "GAL10", "FUR4", "GAL1"], organism="saccharomyces cerevisiae"
+        )
 
-    handle = 2000
-    fiber.fetch_orfs_by_range(
-        fiber.orfs[0]["chromosome"],
-        fiber.orfs[0]["start"] - handle,
-        fiber.orfs[0]["end"] + handle,
-    )
+        handle = 1000
 
-    fiber.fetch_sequence_by_orfs(margin_upstream=1000, margin_downstream=1000)
+        fiber.fetch_orfs_by_range(
+            fiber.orfs[0]["chromosome"],
+            fiber.orfs[0]["start"] - handle,
+            fiber.orfs[0]["end"] + handle,
+        )
 
-    # plotter.plot(cf, occupancy=True, dyads=False, orfs=True)
+        fiber.fetch_sequence_by_orfs(margin_upstream=1000, margin_downstream=1000)
 
-    # get_weight(FOOTPRINT, period=10.1, amplitude=0.2, show=True)
+        # plotter.plot(cf, occupancy=True, dyads=False, orfs=True)
 
-    # fiber.fetch_orfs_by_range("II", 273_253, 284_607)
-    # fiber.fetch_sequence_by_range("II", 273_253, 284_607)
-    # fiber.fetch_sequence_by_range("II", 277_900, 280_000)
-    # fiber.fetch_sequence_by_orfs(margin_upstream=2000, margin_downstream=2000)
+        # get_weight(FOOTPRINT, period=10.1, amplitude=0.2, show=True)
 
-    fiber.calc_energy_landscape(
-        octamer=True, period=10.0, amplitude=0.05, chemical_potential=1.5
-    )
+        # fiber.fetch_orfs_by_range("II", 273_253, 284_607)
+        # fiber.fetch_sequence_by_range("II", 273_253, 284_607)
+        # fiber.fetch_sequence_by_range("II", 277_900, 280_000)
+        # fiber.fetch_sequence_by_orfs(margin_upstream=2000, margin_downstream=2000)
 
-    dyads_sampled, occupancy_sampled = fiber.sample_fiber_configuration()
+        fiber.calc_energy_landscape(
+            octamer=True, period=10.0, amplitude=0.05, chemical_potential=1.5
+        )
 
-    plotter.plot(fiber, occupancy=True, dyads=dyads_sampled, orfs=True, energy=True)
-
-    methylation = fiber.calc_methylation(
-        dyads=dyads_sampled,
-        e_contact=-0.6,
-        motifs=["A"],
-        strand="both",
-        efficiency=0.85,
-    )
-
-    plt.plot(fiber.index, methylation.protected, label="Protected", color="blue")
-
-    plt.plot(
-        fiber.index,
-        methylation.methylated,
-        label="Methylated",
-        color="green",
-        linestyle="none",
-        marker="o",
-        markersize=2,
-        alpha=0.4,
-    )
-
-    n = 100
-    mean_protected = np.zeros(len(fiber.sequence))
-    for _ in range(n):
         dyads_sampled, occupancy_sampled = fiber.sample_fiber_configuration()
+
+        plotter.plot(fiber, occupancy=True, dyads=dyads_sampled, orfs=True, energy=True)
+
         methylation = fiber.calc_methylation(
             dyads=dyads_sampled,
             e_contact=-0.6,
@@ -914,9 +986,51 @@ if __name__ == "__main__":
             strand="both",
             efficiency=0.85,
         )
-        mean_protected += methylation.protected
-    mean_protected /= n
 
-    plt.plot(fiber.index, mean_protected, label="Mean Protected", color="green")
+        plt.plot(fiber.index, methylation.protected, label="Protected", color="blue")
 
+        plt.plot(
+            fiber.index,
+            methylation.methylated,
+            label="Methylated",
+            color="green",
+            linestyle="none",
+            marker="o",
+            markersize=2,
+            alpha=0.4,
+        )
+
+        n = 100
+        mean_protected = np.zeros(len(fiber.sequence))
+        for _ in range(n):
+            dyads_sampled, occupancy_sampled = fiber.sample_fiber_configuration()
+            methylation = fiber.calc_methylation(
+                dyads=dyads_sampled,
+                e_contact=-0.6,
+                motifs=["A"],
+                strand="both",
+                efficiency=0.85,
+            )
+            mean_protected += methylation.protected
+        mean_protected /= n
+
+        plt.plot(fiber.index, mean_protected, label="Mean Protected", color="green")
+
+        plt.show()
+
+    fiber = ChromatinFiber()
+    fiber.read_dna(r"data/S_CP115_pUC18 (Amp) 16x167.dna", 1300)
+
+    fiber.calc_energy_landscape(octamer=False, amplitude=0.1, chemical_potential=10)
+
+    molecule = fiber.sample_fiber_configuration()
+    methylation = fiber.calc_methylation(molecule[0])
+
+    plotter = SequencePlotter()
+    plotter.plot(
+        fiber,
+        occupancy=methylation.protected,
+        energy=True,
+        methylation=methylation.methylated,
+    )
     plt.show()
