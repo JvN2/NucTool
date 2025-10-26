@@ -24,6 +24,10 @@ _ASCII_TO_IDX[ord("A")] = 0
 _ASCII_TO_IDX[ord("C")] = 1
 _ASCII_TO_IDX[ord("G")] = 2
 _ASCII_TO_IDX[ord("T")] = 3
+_ASCII_TO_IDX[ord("a")] = 4
+_ASCII_TO_IDX[ord("c")] = 5
+_ASCII_TO_IDX[ord("g")] = 6
+_ASCII_TO_IDX[ord("t")] = 7
 
 
 @dataclass(frozen=True)
@@ -109,6 +113,7 @@ def plot_footprints(footprints, index, n_max=None):
     sm.set_array([])
     plt.colorbar(sm, ax=ax, ticks=np.linspace(0, 250, 6))
     plt.gcf().set_size_inches(14.5, 3)
+    plt.tight_layout()
 
     # plt.show()
     return
@@ -226,7 +231,7 @@ def calc_wrapping_energy(
 
     # Extract and encode sequence segment
     seq_segment = sequence[dyad + start : dyad + end - 1]
-    idx = encode_seq(seq_segment)
+    idx = encode_seq(seq_segment.upper())
 
     # sum log-weights for both orientations as nucleosome is symmetric
     n = len(idx) - 1
@@ -423,7 +428,7 @@ def fetch_chromosome_sequence(filename, chromosome="II"):
     record = next(
         (r for r in records if pat.search(r.id + " " + r.description)), records[0]
     )
-    print(f"Selected record: {record.id}  len={len(record.seq)}")
+    print(f"Selected chromosome: {record.id}  len={len(record.seq)}")
 
     # list all ORFs in the record
     for feature in record.features:
@@ -739,7 +744,7 @@ class ChromatinFiber:
             self.energy, mu=chemical_potential, show=False
         )
 
-    def sample_fiber_configuration(self) -> tuple[np.ndarray, np.ndarray]:
+    def sample_fiber_configuration(self) -> np.ndarray:
         """
         Stochastically sample a single nucleosome arrangement to generate ensemble statistics.
         Edge regions are excluded to prevent boundary artifacts from biasing occupancy.
@@ -826,8 +831,14 @@ class ChromatinFiber:
         return MethylationResult(protected, methylated)
 
     def encode_methylations(self, methylated: np.ndarray) -> str:
+        """make methylated bases lowercase in sequence string"""
+        if self.sequence is None:
+            raise ValueError(
+                "Sequence must be initialized before encoding methylations"
+            )
+
         encoded_sequence = [
-            base.upper() if methylated[i] == 1 else base.lower()
+            base.lower() if methylated[i] == 1 else base.upper()
             for i, base in enumerate(self.sequence)
         ]
         return "".join(encoded_sequence)
@@ -846,10 +857,12 @@ class SequencePlotter:
         plt.rcParams.update({"ytick.labelsize": self.font_size * 0.83})
         plt.rcParams.update({"legend.fontsize": self.font_size * 0.83})
 
-    def add_caption(self, title: str, fig_num: int | None = None) -> None:
+    def add_caption(
+        self, title: str, fig_num: int | None = None, filename: str | None = None
+    ) -> None:
         if fig_num is None:
             fig_num = self.figure_counter
-        plt.tight_layout()
+        # plt.tight_layout()
         formatted_caption = f"$\\bf{{Figure\\ {fig_num})}}$ {title}"
         plt.suptitle(
             formatted_caption,
@@ -859,7 +872,30 @@ class SequencePlotter:
             fontsize=self.font_size,
             wrap=True,
         )
+
+        if filename is not None:
+            filename = filename.replace(".", f"_{fig_num}.")
+            plt.savefig(filename, dpi=600, bbox_inches="tight")
+
+        plt.show()
         self.figure_counter += 1
+        return
+
+    def add_label(self, fig_label: str | None = None) -> None:
+        if fig_label is None:
+            fig_label = "A"
+
+        formatted_caption = f"$\\bf{{{fig_label})}}$"
+        plt.text(
+            x=0,
+            y=1.0,
+            s=formatted_caption,
+            # transform=plt.gcf().transFigure,
+            fontsize=self.font_size,
+            fontweight="bold",
+            va="top",
+            ha="left",
+        )
         return
 
     def plot(
@@ -877,7 +913,6 @@ class SequencePlotter:
         plt.ylabel("occupancy")
         plt.xlim(min(fiber.index), max(fiber.index))
         plt.ylim(-0.1, 1.1)
-        plt.tight_layout()
         plt.subplots_adjust(right=0.94)
 
         if isinstance(occupancy, bool) and fiber.occupancy is not None:
@@ -944,6 +979,7 @@ class SequencePlotter:
             plt.plot(
                 fiber.index, methylation, "o", color="green", markersize=2, alpha=0.5
             )
+        plt.tight_layout()
 
     def save_figure(self, filename: str) -> None:
         plt.savefig(
@@ -951,21 +987,43 @@ class SequencePlotter:
         )
 
 
-def simulate_chromatin_fibers(n_samples: int = 1000, length: int = 10_000) -> None:
+def simulate_chromatin_fibers(
+    n_samples: int = 1000, length: int = 10_000
+) -> tuple[list[tuple[np.ndarray, np.ndarray]], list[str]]:
+    """Simulate many chromatin fibers.
 
-    dyads_data = []
-    methylated_sequences = []
-    for _ in tqdm(range(n_samples)):
+    Returns a tuple of (dyads_data, methylated_sequences):
+      - dyads_data: list of (dyads, occupancy) tuples returned by
+        `ChromatinFiber.sample_fiber_configuration()`
+      - methylated_sequences: list of encoded sequences (str) where
+        methylated bases are uppercase and unmethylated are lowercase.
+    """
 
+    dyads_data: list[tuple[np.ndarray, np.ndarray]] = []
+    methylated_sequences: list[str] = []
+    encoded_sequences: list[str] = []
+
+    for i in tqdm(range(n_samples)):
         sequence = "".join(np.random.choice(list("ACGT"), size=length))
         fiber = ChromatinFiber(sequence=sequence)
-        fiber.calc_energy_landscape(octamer=True, amplitude=0.1, chemical_potential=1)
-        dyads = fiber.sample_fiber_configuration()
-        methylation = fiber.calc_methylation(dyads)
+        fiber.calc_energy_landscape(
+            octamer=True, amplitude=0.07, chemical_potential=-1.0
+        )
 
-        dyads_data.append(dyads)
+        dyads_data.append(fiber.sample_fiber_configuration())
+        methylation = fiber.calc_methylation(
+            dyads_data[-1],
+            e_contact=-0.5,
+            motifs=["A"],
+            strand="both",
+            efficiency=0.4,
+            steric_exclusion=5,
+        )
+
         methylated_sequences.append(fiber.encode_methylations(methylation.methylated))
-    return dyads_data, methylated_sequences
+        encoded_sequences.append(encode_seq(methylated_sequences[-1]))
+
+    return dyads_data, methylated_sequences, encoded_sequences
 
 
 if __name__ == "__main__":
@@ -1062,11 +1120,13 @@ if __name__ == "__main__":
     #     fiber,
     #     occupancy=methylation.protected,
     #     energy=False,
+
     #     methylation=methylation.methylated,
     #     dyads=dyads,
     # )
     # plt.show()
 
-    x, y = simulate_chromatin_fibers(n_samples=10, length=5000)
-    print(x[0])
-    print(y[0])
+    x, y, z = simulate_chromatin_fibers(n_samples=1, length=500)
+    ic(x[0])
+    ic(y[0])
+    ic(z[0])
