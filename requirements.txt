@@ -1,4 +1,5 @@
 numpy
+pandas
 scipy
 matplotlib
 tqdm
@@ -7,3 +8,5 @@ numba
 icecream
 genomepy
 biopython
+torch
+scikit-learn
