@@ -988,36 +988,50 @@ class SequencePlotter:
 
 
 def simulate_chromatin_fibers(
-    n_samples: int = 1000, length: int = 10_000
-) -> tuple[list[tuple[np.ndarray, np.ndarray]], list[str]]:
+    n_samples: int = 1000,
+    length: int = 10_000,
+    amplitude: float = 0.05,
+    period: float = 10.0,
+    chemical_potential: float = 0.0,
+    e_contact: float = -0.5,
+    motifs: list[str] = ["A"],
+    strand: str = "both",
+    efficiency: float = 0.7,
+    steric_exclusion: int = 0,
+) -> tuple[list[np.ndarray], list[str], list[np.ndarray]]:
     """Simulate many chromatin fibers.
 
-    Returns a tuple of (dyads_data, methylated_sequences):
-      - dyads_data: list of (dyads, occupancy) tuples returned by
-        `ChromatinFiber.sample_fiber_configuration()`
+    Returns a tuple of (dyads_list, methylated_sequences, encoded_sequences):
+      - dyads_list: list of arrays of dyad positions
       - methylated_sequences: list of encoded sequences (str) where
         methylated bases are uppercase and unmethylated are lowercase.
+      - encoded_sequences: list of numpy arrays of encoded bases (0-7)
     """
 
-    dyads_data: list[tuple[np.ndarray, np.ndarray]] = []
+    dyads_data: list[np.ndarray] = []
     methylated_sequences: list[str] = []
-    encoded_sequences: list[str] = []
+    encoded_sequences: list[np.ndarray] = []
 
     for i in tqdm(range(n_samples)):
         sequence = "".join(np.random.choice(list("ACGT"), size=length))
         fiber = ChromatinFiber(sequence=sequence)
         fiber.calc_energy_landscape(
-            octamer=True, amplitude=0.07, chemical_potential=-1.0
+            octamer=True,
+            amplitude=amplitude,
+            chemical_potential=chemical_potential,
+            period=period,
         )
 
+
         dyads_data.append(fiber.sample_fiber_configuration())
+
         methylation = fiber.calc_methylation(
             dyads_data[-1],
-            e_contact=-0.5,
-            motifs=["A"],
-            strand="both",
-            efficiency=0.4,
-            steric_exclusion=5,
+            e_contact=e_contact,
+            motifs=motifs,
+            strand=strand,
+            efficiency=efficiency,
+            steric_exclusion=steric_exclusion,
         )
 
         methylated_sequences.append(fiber.encode_methylations(methylation.methylated))
