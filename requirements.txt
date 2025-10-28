@@ -10,3 +10,5 @@ genomepy
 biopython
 torch
 scikit-learn
+pathlib
+ipywidgets
