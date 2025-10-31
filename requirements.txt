@@ -12,3 +12,4 @@ torch
 scikit-learn
 pathlib
 ipywidgets
+h5py
