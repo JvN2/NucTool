@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from fileinput import filename
 import numpy as np
 import pandas as pd
 import re
@@ -14,6 +15,8 @@ import matplotlib.patches as mpatches
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
 import genomepy
+import h5py
+from pathlib import Path
 
 
 FOOTPRINT = 146
@@ -42,9 +45,11 @@ class MethylationResult:
     protected: np.ndarray
     methylated: np.ndarray
 
+
 @dataclass
-class  SimulationParams:
+class SimulationParams:
     """Parameters for chromatin fiber simulation."""
+
     n_samples: int = 1000
     length_bp: int = 10_000
     amplitude: float = 0.05
@@ -1001,23 +1006,22 @@ class SequencePlotter:
         )
 
 
-def simulate_chromatin_fibers(params: SimulationParams
-
-) -> tuple[list[np.ndarray], list[str], list[np.ndarray]]:
+def simulate_chromatin_fibers(params: SimulationParams, filename: str):
     """Simulate many chromatin fibers.
 
-    Returns a tuple of (dyads_list, methylated_sequences, encoded_sequences):
-      - dyads_list: list of arrays of dyad positions
-      - methylated_sequences: list of encoded sequences (str) where
-        methylated bases are uppercase and unmethylated are lowercase.
-      - encoded_sequences: list of numpy arrays of encoded bases (0-7)
+    Each sample is written to HDF5 immediately as it's generated:
+       - 'dyad_flat': concatenated dyad positions (int64)
+       - 'dyad_lengths': per-sample dyad array lengths (int64)
+       - 'encoded_flat': concatenated encoded sequences (int8)
+       - 'encoded_lengths': per-sample sequence lengths (int64)
+       - 'methylated_sequences': variable-length string dataset
+       - n_samples attribute: total number of samples in file
     """
 
-    dyads_data: list[np.ndarray] = []
-    methylated_sequences: list[str] = []
-    encoded_sequences: list[np.ndarray] = []
+    h5_context = _H5Writer(filename, params)
 
-    for i in tqdm(range(params.n_samples)):
+    print("Save fibers in HDF5 file:", h5_context.filename)
+    for i in tqdm(range(params.n_samples), desc="Simulating fibers"):
         sequence = "".join(np.random.choice(list("ACGT"), size=params.length_bp))
         fiber = ChromatinFiber(sequence=sequence)
         fiber.calc_energy_landscape(
@@ -1027,11 +1031,10 @@ def simulate_chromatin_fibers(params: SimulationParams
             period=params.period_bp,
         )
 
-
-        dyads_data.append(fiber.sample_fiber_configuration())
+        dyads = fiber.sample_fiber_configuration()
 
         methylation = fiber.calc_methylation(
-            dyads_data[-1],
+            dyads,
             e_contact=params.e_contact_kT,
             motifs=params.motifs,
             strand=params.strand,
@@ -1039,10 +1042,224 @@ def simulate_chromatin_fibers(params: SimulationParams
             steric_exclusion=params.steric_exclusion_bp,
         )
 
-        methylated_sequences.append(fiber.encode_methylations(methylation.methylated))
-        encoded_sequences.append(encode_seq(methylated_sequences[-1]))
+        methylated_seq = fiber.encode_methylations(methylation.methylated)
+        encoded_seq = encode_seq(methylated_seq)
 
-    return dyads_data, methylated_sequences, encoded_sequences
+        h5_context.write_sample(dyads, encoded_seq, methylated_seq)
+
+    file_out = h5_context.close().__str__()
+    return file_out
+
+
+class _H5Writer:
+    """Context manager for incremental writing to HDF5 file."""
+
+    def __init__(self, filename: str, params: SimulationParams):
+        self.filename = Path(filename).with_suffix(".h5")
+
+        # Create parent directory if it doesn't exist
+        self.filename.parent.mkdir(parents=True, exist_ok=True)
+
+        self.file_exists = self.filename.exists()
+        mode = "a" if self.file_exists else "w"
+        self.f = h5py.File(self.filename, mode)
+
+        # Variable-length string dtype
+        self.dt_vlen_str = h5py.special_dtype(vlen=str)
+
+        # Initialize datasets if new file
+        if not self.file_exists or "dyad_flat" not in self.f:
+            # Save simulation parameters as attributes
+            self.f.attrs["n_samples"] = params.n_samples
+            self.f.attrs["length_bp"] = params.length_bp
+            self.f.attrs["amplitude"] = params.amplitude
+            self.f.attrs["period_bp"] = params.period_bp
+            self.f.attrs["chemical_potential_kT"] = params.chemical_potential_kT
+            self.f.attrs["e_contact_kT"] = params.e_contact_kT
+            # Convert list/tuple to string for motifs
+            self.f.attrs["motifs"] = (
+                ",".join(params.motifs)
+                if isinstance(params.motifs, (list, tuple))
+                else str(params.motifs)
+            )
+            self.f.attrs["strand"] = params.strand
+            self.f.attrs["efficiency"] = params.efficiency
+            self.f.attrs["steric_exclusion_bp"] = params.steric_exclusion_bp
+            self.f.create_dataset(
+                "dyad_flat",
+                shape=(0,),
+                maxshape=(None,),
+                dtype="i8",
+                chunks=True,
+                compression="gzip",
+                compression_opts=4,
+            )
+            self.f.create_dataset(
+                "dyad_lengths", shape=(0,), maxshape=(None,), dtype="i8", chunks=True
+            )
+            self.f.create_dataset(
+                "encoded_flat",
+                shape=(0,),
+                maxshape=(None,),
+                dtype="i1",
+                chunks=True,
+                compression="gzip",
+                compression_opts=4,
+            )
+            self.f.create_dataset(
+                "encoded_lengths", shape=(0,), maxshape=(None,), dtype="i8", chunks=True
+            )
+            self.f.create_dataset(
+                "methylated_sequences",
+                shape=(0,),
+                maxshape=(None,),
+                dtype=self.dt_vlen_str,
+                chunks=True,
+            )
+            self.f.attrs["n_samples"] = 0
+
+    def write_sample(
+        self, dyads: np.ndarray, encoded: np.ndarray, methylated: str
+    ) -> None:
+        """Write a single sample to the HDF5 file."""
+        # Append dyad data
+        dyad_ds = self.f["dyad_flat"]
+        old_dyad_size = dyad_ds.shape[0]
+        dyad_ds.resize((old_dyad_size + len(dyads),))
+        dyad_ds[old_dyad_size:] = dyads
+
+        dyad_len_ds = self.f["dyad_lengths"]
+        old_len_size = dyad_len_ds.shape[0]
+        dyad_len_ds.resize((old_len_size + 1,))
+        dyad_len_ds[old_len_size] = len(dyads)
+
+        # Append encoded data
+        enc_ds = self.f["encoded_flat"]
+        old_enc_size = enc_ds.shape[0]
+        enc_ds.resize((old_enc_size + len(encoded),))
+        enc_ds[old_enc_size:] = encoded
+
+        enc_len_ds = self.f["encoded_lengths"]
+        old_enc_len_size = enc_len_ds.shape[0]
+        enc_len_ds.resize((old_enc_len_size + 1,))
+        enc_len_ds[old_enc_len_size] = len(encoded)
+
+        # Append methylated sequence
+        meth_ds = self.f["methylated_sequences"]
+        old_meth_size = meth_ds.shape[0]
+        meth_ds.resize((old_meth_size + 1,))
+        meth_ds[old_meth_size] = methylated
+
+        # Update sample count
+        self.f.attrs["n_samples"] = int(dyad_len_ds.shape[0])
+
+    def close(self) -> None:
+        """Close the HDF5 file and print summary."""
+        n_samples = int(self.f.attrs["n_samples"])
+        self.f.close()
+        return self.filename
+
+
+def read_simulation_results(filename: str, indices=None):
+    """Read data or parameters from HDF5 file.
+
+    Flexible function that returns different data based on the indices parameter:
+    - indices=None: returns SimulationParams (parameters used to generate the data)
+    - indices=int: returns single sample as tuple (dyad_positions, encoded_sequence, methylated_sequence)
+    - indices=list/array: returns batch as tuple of lists ([dyad_positions], [encoded_sequences], [methylated_sequences])
+
+    Args:
+        filename: path to HDF5 file (with or without .h5 extension)
+        indices: None for params, int for single sample, list/array for batch
+
+    Returns:
+        SimulationParams, tuple (single sample), or tuple of lists (batch)
+
+    Examples:
+        >>> params = read_h5("data.h5")  # Get parameters
+        >>> dyads, encoded, meth = read_h5("data.h5", 0)  # Get first sample
+        >>> dyads_list, enc_list, meth_list = read_h5("data.h5", [0, 5, 10])  # Get batch
+    """
+    filename = Path(filename).with_suffix(".h5")
+
+    with h5py.File(filename, "r") as f:
+        # Case 1: Return parameters
+        if indices is None:
+            motifs_str = f.attrs.get("motifs", "A")
+            motifs = (
+                tuple(motifs_str.split(",")) if "," in motifs_str else (motifs_str,)
+            )
+
+            return SimulationParams(
+                n_samples=int(f.attrs.get("n_samples", 0)),
+                length_bp=int(f.attrs.get("length_bp", 10000)),
+                amplitude=float(f.attrs.get("amplitude", 0.05)),
+                period_bp=float(f.attrs.get("period_bp", 10.0)),
+                chemical_potential_kT=float(f.attrs.get("chemical_potential_kT", 0.0)),
+                e_contact_kT=float(f.attrs.get("e_contact_kT", -0.5)),
+                motifs=list(motifs),
+                strand=str(f.attrs.get("strand", "both")),
+                efficiency=float(f.attrs.get("efficiency", 0.7)),
+                steric_exclusion_bp=int(f.attrs.get("steric_exclusion_bp", 0)),
+            )
+
+        n_samples = int(f.attrs["n_samples"])
+
+        # Case 2: Single sample (integer index)
+        if isinstance(indices, int):
+            if indices < 0 or indices >= n_samples:
+                raise IndexError(f"Index {indices} out of range [0, {n_samples})")
+
+            # Read lengths to compute offsets
+            dyad_lengths = f["dyad_lengths"][:]
+            enc_lengths = f["encoded_lengths"][:]
+
+            # Compute offsets
+            dyad_offsets = np.concatenate([[0], np.cumsum(dyad_lengths[:-1])])
+            enc_offsets = np.concatenate([[0], np.cumsum(enc_lengths[:-1])])
+
+            # Read slices
+            dyad_start = int(dyad_offsets[indices])
+            dyad_end = int(dyad_start + dyad_lengths[indices])
+            dyads = f["dyad_flat"][dyad_start:dyad_end]
+
+            enc_start = int(enc_offsets[indices])
+            enc_end = int(enc_start + enc_lengths[indices])
+            encoded = f["encoded_flat"][enc_start:enc_end]
+
+            methylated = f["methylated_sequences"][indices]
+
+            return dyads, encoded, methylated
+
+        # Case 3: Batch (list or array of indices)
+        indices_arr = np.asarray(indices)
+        if np.any(indices_arr < 0) or np.any(indices_arr >= n_samples):
+            raise IndexError(f"Some indices out of range [0, {n_samples})")
+
+        # Read all lengths once
+        dyad_lengths = f["dyad_lengths"][:]
+        enc_lengths = f["encoded_lengths"][:]
+
+        # Compute offsets
+        dyad_offsets = np.concatenate([[0], np.cumsum(dyad_lengths)])
+        enc_offsets = np.concatenate([[0], np.cumsum(enc_lengths)])
+
+        dyads_list = []
+        encoded_list = []
+        methylated_list = []
+
+        for idx in indices_arr:
+            dyad_start = int(dyad_offsets[idx])
+            dyad_end = int(dyad_offsets[idx + 1])
+            dyads_list.append(f["dyad_flat"][dyad_start:dyad_end])
+
+            enc_start = int(enc_offsets[idx])
+            enc_end = int(enc_offsets[idx + 1])
+            encoded_list.append(f["encoded_flat"][enc_start:enc_end])
+
+            methylated_list.append(f["methylated_sequences"][idx])
+
+        return dyads_list, encoded_list, methylated_list
 
 
 if __name__ == "__main__":
@@ -1145,7 +1362,22 @@ if __name__ == "__main__":
     # )
     # plt.show()
 
-    x, y, z = simulate_chromatin_fibers(n_samples=1, length=500)
+    # Test incremental HDF5 writing
+    params = SimulationParams(n_samples=3, length_bp=500)
+    x, y, z = simulate_chromatin_fibers(params, filename="test_incremental.h5")
     ic(x[0])
     ic(y[0])
     ic(z[0])
+
+    # Test appending more samples
+    params2 = SimulationParams(n_samples=2, length_bp=500)
+    simulate_chromatin_fibers(params2, filename="test_incremental.h5")
+
+    # Test reading back data and parameters
+    dyads, encoded, methylated = read_h5_sample("test_incremental.h5", 0)
+    ic(dyads)
+    ic(encoded)
+
+    # Read simulation parameters
+    saved_params = read_h5_params("test_incremental.h5")
+    ic(saved_params)
