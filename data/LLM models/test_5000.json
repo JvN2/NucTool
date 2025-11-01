@@ -1,0 +1,29 @@
+{
+    "simulation": {
+        "n_samples": 5000,
+        "length_bp": 10000,
+        "amplitude": 0.05,
+        "period_bp": 10.0,
+        "chemical_potential_kT": 0.0,
+        "e_contact_kT": -0.5,
+        "motifs": [
+            "A"
+        ],
+        "strand": "both",
+        "efficiency": 0.7,
+        "steric_exclusion_bp": 0
+    },
+    "llm": {
+        "vocab_size": 8,
+        "embedding_dim": 16,
+        "hidden_dim": 64,
+        "num_layers": 2,
+        "dropout": 0.3,
+        "pos_weight": 100.0,
+        "learning_rate": 0.001,
+        "weight_decay": 1e-05,
+        "batch_size": 32,
+        "optimizer": "Adam",
+        "scheduler": "ReduceLROnPlateau"
+    }
+}
