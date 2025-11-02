@@ -25,5 +25,18 @@
         "batch_size": 32,
         "optimizer": "Adam",
         "scheduler": "ReduceLROnPlateau"
+    },
+    "test_metrics": {
+        "n_train_samples": 3500,
+        "n_test_samples": 750,
+        "n_val_samples": 750,
+        "n_test_positions": 7500000,
+        "threshold": 0.3,
+        "test_loss": 0.16219673243661722,
+        "accuracy": 0.9394944,
+        "precision": 0.07762083236683717,
+        "recall": 0.9877272021127854,
+        "f1_score": 0.1439308190338208,
+        "roc_auc": 0.989628457264904
     }
 }
