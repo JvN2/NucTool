@@ -38,3 +38,6 @@ htmlcov/
 
 # figures
 figures
+
+# Large data files
+data/LLM models/*.h5
