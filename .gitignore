@@ -35,3 +35,6 @@ htmlcov/
 .genomes/sacCer3/sacCer3.fa.sizes
 .genomes/sacCer3/sacCer3.gaps.bed
 .genomes/sacCer3/assembly_report.txt
+
+# figures
+figures
