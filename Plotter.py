@@ -53,7 +53,7 @@ class Plotter:
         Args:
             fig_size: Default figure size as (width, height) tuple
         """
-        self.figure_counter: int = 1
+        self.figure_number: int = 0
         self.fig_size: tuple[int, int] = fig_size
         self.font_size: int = 14
         self.fig = None
@@ -95,7 +95,15 @@ class Plotter:
             return np.array([self.axes])
         return axes_array.flat
 
-    def new(self, fig_size=None, constrained_layout=True, ncols=1, nrows=1, **kwargs):
+    def new(
+        self,
+        fig_size=None,
+        constrained_layout=True,
+        ncols=1,
+        nrows=1,
+        fig_num=None,
+        **kwargs,
+    ):
         """
         Create a new figure with optional subplots.
 
@@ -109,6 +117,7 @@ class Plotter:
                 prevent overlap and maintain consistent plot areas regardless of labels.
             nrows: Number of subplot rows. Default is 1.
             ncols: Number of subplot columns. Default is 1.
+            fig_num: Optional figure number. If None, auto-increments from current counter.
             **kwargs: Additional arguments passed to plt.subplots() (e.g., sharex, sharey)
 
         Returns:
@@ -116,16 +125,17 @@ class Plotter:
 
         Example:
             plot.new(nrows=2, ncols=2, fig_size=(12, 8))
-            for panel in plot.panels:
-                panel.plot(x, y)
-
-            fig: Figure object (also stored in self.fig)
-
-        Note:
-            If nrows/ncols are provided, axes are accessible via self.panels or self.axes
+            plot.new(fig_num=5)  # Explicitly set figure number to 5
         """
         if fig_size is not None:
             self.fig_size = fig_size
+
+        # Set figure number (if provided) or keep current counter
+        # Note: figure_counter is incremented in add_caption(), not here
+        if fig_num is not None:
+            self.figure_number = fig_num
+        else:
+            self.figure_number += 1
 
         # Clear panel descriptions for new figure
         self.panel_descriptions = []
@@ -268,7 +278,7 @@ class Plotter:
             auto_label_panels: If True, automatically call label_subplots() for multi-panel figures
         """
         if fig_num is None:
-            fig_num = self.figure_counter
+            fig_num = self.figure_number
 
         # Automatically label subplots if there are multiple panels
         if auto_label_panels and self.axes is not None:
@@ -323,7 +333,6 @@ class Plotter:
             filename = filename.replace(".", f"_{fig_num}.")
             plt.savefig(filename, dpi=600, bbox_inches="tight")
 
-        self.figure_counter += 1
         return
 
     def add_label(self, fig_label: str | None = None) -> None:
@@ -512,6 +521,6 @@ class Plotter:
         Example:
             plot.save_figure("results")  # Saves to figures/results_1.png
         """
-        fileout = f"figures/{filename}_{self.figure_counter}.png"
+        fileout = f"figures/{filename}_{self.figure_number}.png"
         plt.savefig(fileout, dpi=300, bbox_inches="tight")
         print(f"Saved figure: {fileout}")
