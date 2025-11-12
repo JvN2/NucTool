@@ -335,38 +335,6 @@ class Plotter:
 
         return
 
-    def add_label(self, fig_label: str | None = None) -> None:
-        """
-        Add a panel label to the top-left of the current axes.
-
-        Note: This is rarely needed directly as add_caption() with auto_label_panels=True
-        will automatically label all panels. Use this only for manual control.
-
-        Args:
-            fig_label: Label text (default: 'A'). Can be any string like 'A', 'i', '1', etc.
-
-        Example:
-            plt.subplot(1, 2, 1)
-            plt.plot(x, y)
-            plot.add_label('A')
-        """
-        if fig_label is None:
-            fig_label = "A"
-
-        formatted_caption = f"{fig_label}) "
-        ax = plt.gca()
-        ax.text(
-            -0.1,
-            0.98,
-            s=formatted_caption,
-            transform=ax.transAxes,
-            fontsize=self.font_size * 1.2,
-            fontweight="bold",
-            va="top",
-            ha="left",
-        )
-        return
-
     def label_subplots(self, labels=None, start="A"):
         """
         Add labels to all subplots automatically.
@@ -403,7 +371,7 @@ class Plotter:
                 1.1,
                 s=formatted_label,
                 transform=ax.transAxes,
-                fontsize=self.font_size * 1.2,
+                fontsize=self.font_size,
                 fontweight="bold",
                 va="top",
                 ha="right",
