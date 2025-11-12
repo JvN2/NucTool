@@ -1,8 +1,0 @@
-{
-  "vocab_size": 8,
-  "embedding_dim": 16,
-  "hidden_dim": 64,
-  "num_layers": 2,
-  "dropout": 0.3,
-  "max_seq_len": 10000
-}

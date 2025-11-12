@@ -14,6 +14,7 @@ Key features:
 
 import numpy as np
 import matplotlib
+from icecream import ic
 
 # matplotlib.use("Agg")
 
@@ -102,6 +103,8 @@ class Plotter:
         ncols=1,
         nrows=1,
         fig_num=None,
+        sharex=False,
+        sharey=False,
         **kwargs,
     ):
         """
@@ -117,6 +120,10 @@ class Plotter:
                 prevent overlap and maintain consistent plot areas regardless of labels.
             nrows: Number of subplot rows. Default is 1.
             ncols: Number of subplot columns. Default is 1.
+            fig_num: Optional figure number. If None, auto-increments from current counter.
+            sharex: Share x-axis across subplots. Can be True, False, 'all', 'row', 'col', or 'none'.
+            sharey: Share y-axis across subplots. Can be True, False, 'all', 'row', 'col', or 'none'.
+            **kwargs: Additional arguments passed to plt.subplots() (e.g., gridspec_kw)
             fig_num: Optional figure number. If None, auto-increments from current counter.
             **kwargs: Additional arguments passed to plt.subplots() (e.g., sharex, sharey)
 
@@ -149,6 +156,8 @@ class Plotter:
                 ncols=ncols,
                 figsize=self.fig_size,
                 constrained_layout=constrained_layout,
+                sharex=sharex,
+                sharey=sharey,
                 **kwargs,
             )
         else:
@@ -225,7 +234,7 @@ class Plotter:
 
         self.panel_descriptions.append(description)
 
-    def add_caption(
+    def caption(
         self,
         title: str,
         fig_num: int | None = None,
@@ -281,10 +290,10 @@ class Plotter:
             fig_num = self.figure_number
 
         # Automatically label subplots if there are multiple panels
-        if auto_label_panels and self.axes is not None:
-            axes_flat = np.atleast_1d(self.axes).flatten()
-            if len(axes_flat) > 1:
-                self.label_subplots(labels=labels, start=start)
+        # if auto_label_panels and self.axes is not None:
+        #     axes_flat = np.atleast_1d(self.axes).flatten()
+        #     if len(axes_flat) > 1:
+        #         self.label_subplots(labels=labels, start=start)
 
         # Build the caption text
         caption_text = title
@@ -298,6 +307,7 @@ class Plotter:
                 if panel_title:  # Only add if title exists
                     panel_descriptions.append(panel_title)
                     ax.set_title("")  # Remove the title from the plot
+                    self.label_subplots(labels=labels, start=start)
 
             # Only use extracted descriptions if we found any
             if not panel_descriptions:
@@ -317,7 +327,10 @@ class Plotter:
             for label, desc in zip(labels, panel_descriptions):
                 # Remove trailing period if present, we'll add it consistently
                 desc_clean = desc.rstrip(".")
-                caption_text += f" {label}) {desc_clean}."
+                if len(axes_flat) > 1:
+                    caption_text += f" {label}) {desc_clean}."
+                else:
+                    caption_text += f" {desc_clean}."
 
         formatted_caption = f"$\\bf{{Figure\\ {fig_num})}}$ {caption_text}"
         plt.suptitle(
