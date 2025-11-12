@@ -15,11 +15,17 @@ Key features:
 import numpy as np
 import matplotlib
 from icecream import ic
+from tqdm import tqdm
 
 # matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 from typing import TYPE_CHECKING
+
+import matplotlib.patches as mpatches
+from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
+import matplotlib.colors as mcolors
 
 if TYPE_CHECKING:
     from ChromatinFibers import ChromatinFiber
@@ -56,7 +62,7 @@ class Plotter:
         """
         self.figure_number: int = 0
         self.fig_size: tuple[int, int] = fig_size
-        self.font_size: int = 14
+        self.font_size: int = 16
         self.fig = None
         self.axes = None
         self.panel_descriptions: list[str] = []  # Store panel descriptions
@@ -345,6 +351,7 @@ class Plotter:
         if filename is not None:
             filename = filename.replace(".", f"_{fig_num}.")
             plt.savefig(filename, dpi=600, bbox_inches="tight")
+            print(f"Saved figure: {filename}")
 
         return
 
@@ -391,103 +398,6 @@ class Plotter:
             )
         return
 
-    def plot_sequence(
-        self,
-        fiber: "ChromatinFiber",
-        occupancy: bool = True,
-        dyads: bool | np.ndarray = True,
-        orfs: bool = False,
-        energy: bool = False,
-        methylation: bool = False,
-    ) -> None:
-        """
-        Plot a chromatin fiber with nucleosome occupancy and positions.
-
-        This is a specialized method for visualizing ChromatinFiber objects
-        from the chromatin simulation code.
-
-        Args:
-            fiber: ChromatinFiber object containing sequence and nucleosome data
-            occupancy: If True, plot nucleosome occupancy as shaded region
-            dyads: If True, plot dyad positions as vertical lines. Can also be array of positions.
-            orfs: If True, show open reading frames
-            energy: If True, show sequence-dependent energy landscape
-            methylation: If True, show methylation sites
-        """
-
-        plt.figure(figsize=(12, 2))
-        plt.xlabel("i (bp)")
-        plt.ylabel("occupancy")
-        plt.xlim(min(fiber.index), max(fiber.index))
-        plt.ylim(-0.1, 1.1)
-        plt.subplots_adjust(right=0.94)
-
-        if isinstance(occupancy, bool) and fiber.occupancy is not None:
-            plt.fill_between(fiber.index, fiber.occupancy, color="blue", alpha=0.3)
-        elif isinstance(occupancy, np.ndarray):
-            plt.fill_between(fiber.index, occupancy, color="blue", alpha=0.3)
-
-        if isinstance(dyads, bool):
-            if dyads:
-                for d in fiber.dyads:
-                    plt.axvline(x=d, ymin=0, color="grey", linestyle="--", alpha=0.7)
-        else:
-            for d in dyads:
-                plt.axvline(x=d, ymin=0, color="grey", linestyle="--", alpha=0.7)
-
-        if orfs:
-            for orf in fiber.orfs:
-                name = orf["name"]
-                if orf["strand"] == -1:
-                    name = f"< {name}"
-                    top = 0
-                    bottom = -0.1
-                else:
-                    name = f"{name} >"
-                    top = 0
-                    bottom = -0.1
-
-                start = min(orf["start"], orf["end"])
-                end = max(orf["start"], orf["end"])
-                plt.fill_between(
-                    [start, end],
-                    bottom,
-                    top,
-                    color="blue",
-                    alpha=0.5,
-                    label=orf["name"],
-                )
-
-                plt.text(
-                    (start + end) / 2,
-                    -0.06,
-                    name,
-                    ha="center",
-                    va="center",
-                    fontsize=7,
-                    font="arial",
-                    weight="bold",
-                    color="white",
-                )
-
-        if energy and fiber.energy is not None:
-            ax1 = plt.gca()  # Get current axis (left y-axis)
-            ax2 = plt.twinx()
-            ax2.plot(fiber.index, fiber.energy, color="red", linewidth=0.5)
-            ax2.set_ylabel(
-                "energy (k$_B$T)", rotation=270, labelpad=18, loc="center", color="red"
-            )
-            ax2.set_ylim(np.nanmin(fiber.energy) * 1.3, np.nanmax(fiber.energy) * 2.6)
-            ax2.tick_params(axis="y", labelcolor="red")
-            ax2.grid(False)
-            plt.sca(ax1)  # Make left y-axis active again
-
-        if isinstance(methylation, np.ndarray):
-            plt.plot(
-                fiber.index, methylation, "o", color="green", markersize=2, alpha=0.5
-            )
-        plt.tight_layout()
-
     def save_figure(self, filename: str = "figure") -> None:
         """
         Save the current figure to the figures/ directory.
@@ -505,3 +415,181 @@ class Plotter:
         fileout = f"figures/{filename}_{self.figure_number}.png"
         plt.savefig(fileout, dpi=300, bbox_inches="tight")
         print(f"Saved figure: {fileout}")
+
+
+def plot_sequence(
+    panel: matplotlib.axes.Axes,
+    fiber: "ChromatinFiber",
+    occupancy: bool = True,
+    dyads: bool | np.ndarray = True,
+    orfs: bool = False,
+    energy: bool = False,
+    methylation: bool = False,
+) -> None:
+    """
+    Plot a chromatin fiber with nucleosome occupancy and positions.
+
+    This is a specialized method for visualizing ChromatinFiber objects
+    from the chromatin simulation code.
+
+    Args:
+        fiber: ChromatinFiber object containing sequence and nucleosome data
+        occupancy: If True, plot nucleosome occupancy as shaded region
+        dyads: If True, plot dyad positions as vertical lines. Can also be array of positions.
+        orfs: If True, show open reading frames
+        energy: If True, show sequence-dependent energy landscape
+        methylation: If True, show methylation sites
+    """
+
+    panel.set_xlabel("i (bp)")
+    panel.set_ylabel("occupancy")
+    panel.set_xlim(min(fiber.index), max(fiber.index))
+    panel.set_ylim(-0.1, 1.1)
+
+    if isinstance(occupancy, bool) and fiber.occupancy is not None:
+        panel.fill_between(fiber.index, fiber.occupancy, color="blue", alpha=0.3)
+    elif isinstance(occupancy, np.ndarray):
+        panel.fill_between(fiber.index, occupancy, color="blue", alpha=0.3)
+
+    if isinstance(dyads, bool):
+        if dyads:
+            for d in fiber.dyads:
+                panel.axvline(x=d, ymin=0, color="grey", linestyle="--", alpha=0.7)
+    else:
+        for d in dyads:
+            panel.axvline(x=d, ymin=0, color="grey", linestyle="--", alpha=0.7)
+
+    if orfs:
+        for orf in fiber.orfs:
+            name = orf["name"]
+            if orf["strand"] == -1:
+                name = f"< {name}"
+                top = 0
+                bottom = -0.1
+            else:
+                name = f"{name} >"
+                top = 0
+                bottom = -0.1
+
+            start = min(orf["start"], orf["end"])
+            end = max(orf["start"], orf["end"])
+            panel.fill_between(
+                [start, end],
+                bottom,
+                top,
+                color="blue",
+                alpha=0.5,
+                label=orf["name"],
+            )
+
+            panel.text(
+                (start + end) / 2,
+                -0.06,
+                name,
+                ha="center",
+                va="center",
+                fontsize=7,
+                font="arial",
+                weight="bold",
+                color="white",
+            )
+
+    if energy and fiber.energy is not None:
+        # ax1 = plt.gca()  # Get current axis (left y-axis)
+        ax2 = panel.twinx()
+        ax2.plot(
+            fiber.index,
+            fiber.energy,
+            color="red",
+            linewidth=0.5,
+            alpha=0.4,
+        )
+        ax2.set_ylabel(
+            "energy (k$_B$T)",
+            rotation=270,
+            labelpad=18,
+            loc="center",
+            color="red",
+        )
+        ax2.set_ylim(-15, 15)
+        ax2.tick_params(axis="y", labelcolor="red")
+        ax2.grid(False)
+
+    if isinstance(methylation, np.ndarray):
+        plt.plot(fiber.index, methylation, "o", color="green", markersize=2, alpha=0.5)
+
+
+def plot_footprints(panel, footprints, index, n_max=None):
+    def create_cmap(crange=(0, 250)):
+        colors = [
+            (0, "white"),
+            (10, "whitesmoke"),
+            (30, "magenta"),
+            (45, "blue"),
+            (55, "blue"),
+            (90, "cyan"),
+            (100, "cyan"),
+            (132, "lime"),
+            (180, "limegreen"),
+            (250, "darkgreen"),
+        ]
+        colors = [(x / colors[-1][0], c) for x, c in colors]
+
+        # Define the new colors
+        norm = mcolors.Normalize(vmin=crange[0], vmax=crange[1])
+        cmap = mcolors.LinearSegmentedColormap.from_list(
+            name="Sterachis", colors=colors, N=250  # Number of color steps
+        )
+        return cmap
+
+    def plot_box(ax, xmin, xmax, ymin, ymax, color, alpha=1):
+        rectangle = mpatches.Rectangle(
+            (xmin, ymin), xmax - xmin, ymax - ymin, facecolor=color, alpha=alpha
+        )
+        ax.add_patch(rectangle)
+        ax.patch.set_zorder(2)
+
+    ax = panel
+    cmap = create_cmap()
+
+    ids = footprints["read_id"].unique()
+
+    if n_max is not None and len(ids) > n_max:
+        ids = ids[np.random.choice(len(ids), n_max, replace=False)]
+
+    xlim = (index[0], index[-1])
+
+    plt.hlines(ids, color="lightgrey", *xlim, zorder=1)
+    norm = Normalize(0, 250)
+    sm = ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    crange = (-10, 250)
+
+    for i, id in tqdm(enumerate(ids), desc="Plotting footprints"):
+        for _, row in footprints[footprints["read_id"] == id].iterrows():
+            plot_box(
+                ax,
+                row["start"],
+                row["end"],
+                i - 0.3,
+                i + 0.3,
+                cmap(norm(np.clip(row["width"], *crange))),
+            )
+
+    panel.set_xlim(xlim)
+    panel.set_ylim(-0.5, len(ids) + 0.5)
+
+    panel.set_yticks([])
+    plt.box(False)
+    plt.gca().spines["left"].set_visible(False)
+    panel.set_xlabel("i (bp)")
+
+    norm = mcolors.Normalize(vmin=0, vmax=250)
+    sm = ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    plt.colorbar(sm, ax=ax, ticks=np.linspace(0, 250, 6))
+    # plt.gcf().set_size_inches(14.5, 3)
+    # plt.tight_layout()
+
+    # plt.show()
+    return

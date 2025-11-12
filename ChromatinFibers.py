@@ -8,12 +8,8 @@ from snapgene_reader import snapgene_file_to_dict
 import matplotlib.pyplot as plt
 from icecream import ic
 from Bio import Entrez, SeqIO
-import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-import matplotlib.patches as mpatches
-from matplotlib.colors import Normalize
-from matplotlib.cm import ScalarMappable
 import genomepy
 import h5py
 from pathlib import Path
@@ -60,82 +56,6 @@ class SimulationParams:
     strand: str = "both"
     efficiency: float = 0.7
     steric_exclusion_bp: int = 0
-
-
-def plot_footprints(footprints, index, n_max=None):
-    def create_cmap(crange=(0, 250)):
-        colors = [
-            (0, "white"),
-            (10, "whitesmoke"),
-            (30, "magenta"),
-            (45, "blue"),
-            (55, "blue"),
-            (90, "cyan"),
-            (100, "cyan"),
-            (132, "lime"),
-            (180, "limegreen"),
-            (250, "darkgreen"),
-        ]
-        colors = [(x / colors[-1][0], c) for x, c in colors]
-
-        # Define the new colors
-        norm = mcolors.Normalize(vmin=crange[0], vmax=crange[1])
-        cmap = mcolors.LinearSegmentedColormap.from_list(
-            name="Sterachis", colors=colors, N=250  # Number of color steps
-        )
-        return cmap
-
-    def plot_box(ax, xmin, xmax, ymin, ymax, color, alpha=1):
-        rectangle = mpatches.Rectangle(
-            (xmin, ymin), xmax - xmin, ymax - ymin, facecolor=color, alpha=alpha
-        )
-        ax.add_patch(rectangle)
-        ax.patch.set_zorder(2)
-
-    ax = plt.gca()
-    cmap = create_cmap()
-
-    ids = footprints["read_id"].unique()
-
-    if n_max is not None and len(ids) > n_max:
-        ids = ids[np.random.choice(len(ids), n_max, replace=False)]
-
-    xlim = (index[0], index[-1])
-
-    plt.hlines(ids, color="lightgrey", *xlim, zorder=1)
-    norm = Normalize(0, 250)
-    sm = ScalarMappable(cmap=cmap, norm=norm)
-    sm.set_array([])
-    crange = (-10, 250)
-
-    for i, id in tqdm(enumerate(ids), desc="Plotting footprints"):
-        for _, row in footprints[footprints["read_id"] == id].iterrows():
-            plot_box(
-                ax,
-                row["start"],
-                row["end"],
-                i - 0.3,
-                i + 0.3,
-                cmap(norm(np.clip(row["width"], *crange))),
-            )
-
-    plt.xlim(xlim)
-    plt.ylim(-0.5, len(ids) + 0.5)
-
-    plt.yticks([])
-    plt.box(False)
-    plt.gca().spines["left"].set_visible(False)
-    plt.xlabel("i (bp)")
-
-    norm = mcolors.Normalize(vmin=0, vmax=250)
-    sm = ScalarMappable(cmap=cmap, norm=norm)
-    sm.set_array([])
-    plt.colorbar(sm, ax=ax, ticks=np.linspace(0, 250, 6))
-    plt.gcf().set_size_inches(14.5, 3)
-    plt.tight_layout()
-
-    # plt.show()
-    return
 
 
 def convert_to_footprints(methylated, index, minimal_footprint=10):
@@ -293,12 +213,12 @@ def calc_wrapping_energy(
 
 
 def compute_vanderlick(
-    wrapping_energy: np.ndarray, mu: float, show: bool = False
+    wrapping_energy: np.ndarray, show: bool = False
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute equilibrium dyad probability accounting for steric exclusion between nucleosomes."""
 
     footprint = FOOTPRINT
-    free_energy = wrapping_energy + mu
+    free_energy = wrapping_energy
     free_energy = np.nan_to_num(free_energy, nan=np.nanmax(free_energy))
     free_energy *= -1
 
@@ -399,7 +319,7 @@ def fetch_chromosome_sequence(filename, chromosome="II"):
     """
     filename = Path(filename)
 
-    ic(str(filename.parent))
+    # ic(str(filename.parent))
     # install genome into the parent dir if the FASTA is missing
     if not filename.exists():
         genomepy.install_genome(
@@ -447,7 +367,9 @@ def fetch_chromosome_sequence(filename, chromosome="II"):
     record = next(
         (r for r in records if pat.search(r.id + " " + r.description)), records[0]
     )
-    print(f"Selected chromosome: {record.id}  len={len(record.seq)}")
+    print(
+        f"Selected chromosome: {str(filename.parent)}, {record.id}  len={len(record.seq)}"
+    )
 
     # list all ORFs in the record
     for feature in record.features:
@@ -759,8 +681,10 @@ class ChromatinFiber:
                 ]
             )
 
+        self.energy += chemical_potential
+
         self.dyad_probability, self.occupancy = compute_vanderlick(
-            self.energy, mu=chemical_potential, show=False
+            self.energy, show=False
         )
 
     def sample_fiber_configuration(self) -> np.ndarray:
