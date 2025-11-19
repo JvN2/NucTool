@@ -1,3 +1,10 @@
+import sys
+from pathlib import Path
+
+# Add nuctool directory to path
+nuctool_path = Path(__file__).parent.parent / "nuctool"
+sys.path.insert(0, str(nuctool_path))
+
 import numpy as np
 from ChromatinFibers import ChromatinFiber
 

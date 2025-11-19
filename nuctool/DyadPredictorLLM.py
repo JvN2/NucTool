@@ -34,8 +34,8 @@ import os
 import warnings
 from typing import Optional, Tuple, List, Dict, Any
 
-from ChromatinFibers import read_simulation_results
-from Plotter import Plotter
+from .ChromatinFibers import read_simulation_results
+from .Plotter import Plotter
 
 
 class SimpleDyadPredictor(nn.Module):

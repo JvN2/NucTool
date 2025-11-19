@@ -2,6 +2,12 @@
 
 A comprehensive Python class for training and applying neural network models to predict nucleosome dyad positions from DNA sequences.
 
+> **Note**: For complete training examples with all implementation details, see the notebooks in `../notebooks/`:
+>
+> - `DyadPredictor.ipynb` - Simple CNN+BiLSTM architecture
+> - `DyadPredictor_dilated.ipynb` - Dilated CNN+BiLSTM architecture
+> - `Apply_DyadPredictor.ipynb` - Apply pretrained models
+
 ## Features
 
 - **Two Model Architectures**:
@@ -26,7 +32,7 @@ A comprehensive Python class for training and applying neural network models to 
 ### 1. Create and Train a New Model
 
 ```python
-from DyadPredictorLLM import DyadPredictorLLM
+from nuctool import DyadPredictorLLM
 
 # Initialize model
 predictor = DyadPredictorLLM()
