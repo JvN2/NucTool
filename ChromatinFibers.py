@@ -1,3 +1,43 @@
+"""
+ChromatinFibers: A comprehensive toolkit for chromatin fiber simulation and analysis.
+
+This module provides tools for simulating and analyzing chromatin fiber structures,
+nucleosome positioning, and DNA methylation patterns. It implements physical models
+of DNA-histone interactions including wrapping energy calculations, steric exclusion
+effects, and thermodynamic equilibrium sampling.
+
+Key Features:
+    - DNA sequence-dependent nucleosome positioning prediction
+    - Wrapping energy calculations based on dinucleotide periodicity
+    - Statistical mechanics modeling (Vanderlick formalism)
+    - Monte Carlo sampling of nucleosome configurations
+    - DNA methylation pattern simulation
+    - Footprint analysis from methylation data
+    - Integration with genomic databases and annotation files
+    - HDF5-based batch simulation framework
+
+Main Classes:
+    - ChromatinFiber: Core class for chromatin fiber modeling and simulation
+    - SimulationParams: Configuration dataclass for batch simulations
+    - WrappingEnergyResult: Container for wrapping energy components
+    - MethylationResult: Container for methylation and protection data
+
+Main Functions:
+    - simulate_chromatin_fibers: Batch simulation with HDF5 output
+    - read_simulation_results: Load and parse simulation results
+    - compute_vanderlick: Statistical mechanics equilibrium solver
+    - convert_to_footprints: Extract footprints from methylation patterns
+
+Example:
+    >>> fiber = ChromatinFiber(sequence="ATCG"*1000, start=0)
+    >>> fiber.calc_energy_landscape(amplitude=0.05, period=10.0)
+    >>> dyads = fiber.sample_fiber_configuration()
+    >>> methylation = fiber.calc_methylation(dyads, efficiency=0.7)
+
+Author: J. van Noort
+Date: 2025
+"""
+
 from dataclasses import dataclass
 from fileinput import filename
 import numpy as np
@@ -16,8 +56,10 @@ from pathlib import Path
 from Plotter import Plotter, FIGSIZE
 
 
-FOOTPRINT = 146
+FOOTPRINT = 146  # Nucleosome DNA footprint size in base pairs
 
+# Optimized lookup table for DNA sequence encoding
+# Maps ASCII characters to numeric indices for vectorized operations
 _ASCII_TO_IDX = np.full(256, -1, dtype=np.int8)
 _ASCII_TO_IDX[ord("A")] = 0
 _ASCII_TO_IDX[ord("C")] = 1
@@ -31,6 +73,14 @@ _ASCII_TO_IDX[ord("t")] = 7
 
 @dataclass(frozen=True)
 class WrappingEnergyResult:
+    """Container for nucleosome wrapping energy components.
+
+    Attributes:
+        octamer: Total wrapping energy for full nucleosome (octamer).
+        tetramer: Partial wrapping energy for tetrasome core.
+        segments: Array of wrapping energies for 14 DNA contact segments.
+    """
+
     octamer: float
     tetramer: float
     segments: np.ndarray
@@ -38,13 +88,33 @@ class WrappingEnergyResult:
 
 @dataclass(frozen=True)
 class MethylationResult:
+    """Container for DNA methylation simulation results.
+
+    Attributes:
+        protected: Boolean array indicating nucleosome-protected positions.
+        methylated: Boolean array indicating successfully methylated positions.
+    """
+
     protected: np.ndarray
     methylated: np.ndarray
 
 
 @dataclass
 class SimulationParams:
-    """Parameters for chromatin fiber simulation."""
+    """Parameters for chromatin fiber simulation.
+
+    Attributes:
+        n_samples: Number of fiber configurations to sample.
+        length_bp: Length of DNA sequence in base pairs.
+        amplitude: Amplitude of periodic dinucleotide preference (0-1).
+        period_bp: Period of DNA bending preference in base pairs (~10 bp).
+        chemical_potential_kT: Nucleosome binding chemical potential in kT units.
+        e_contact_kT: Energy per DNA-histone contact point in kT units.
+        motifs: Tuple of DNA motifs to search for in methylation analysis.
+        strand: Strand specification for motif search ("both", "plus", "minus").
+        efficiency: Methylation efficiency (0-1).
+        steric_exclusion_bp: Excluded footprint size for nucleosome sampling.
+    """
 
     n_samples: int = 1000
     length_bp: int = 10_000
@@ -59,6 +129,23 @@ class SimulationParams:
 
 
 def convert_to_footprints(methylated, index, minimal_footprint=10):
+    """Convert methylation patterns to nucleosome footprints.
+
+    Identifies protected regions (footprints) from methylation accessibility data
+    by finding gaps between methylated positions.
+
+    Args:
+        methylated: List of boolean arrays indicating methylation at each position.
+        index: Array of genomic positions corresponding to methylation data.
+        minimal_footprint: Minimum footprint size in bp to include (default 10).
+
+    Returns:
+        DataFrame with columns: read_id, start, end, width.
+
+    Example:
+        >>> footprints = convert_to_footprints(methylated, positions, minimal_footprint=100)
+        >>> avg_size = footprints['width'].mean()
+    """
     footprints = []
     idx = np.asarray(index)
 
@@ -84,7 +171,21 @@ def convert_to_footprints(methylated, index, minimal_footprint=10):
 
 
 def encode_seq(seq: str) -> np.ndarray:
-    """Convert sequence string to numeric indices for vectorized computation."""
+    """Convert DNA sequence string to numeric indices for vectorized computation.
+
+    Maps nucleotide characters to integers: A→0, C→1, G→2, T→3 (uppercase),
+    and a→4, c→5, g→6, t→7 (lowercase). Other characters map to -1.
+
+    Args:
+        seq: DNA sequence string (can be str or Biopython Seq object).
+
+    Returns:
+        NumPy array of int8 indices for each nucleotide.
+
+    Example:
+        >>> encode_seq("ATCG")
+        array([0, 3, 1, 2], dtype=int8)
+    """
     # Convert Biopython Seq object to string if needed
     seq_str = str(seq)
     b = np.frombuffer(seq_str.encode("ascii"), dtype=np.uint8)
@@ -94,7 +195,31 @@ def encode_seq(seq: str) -> np.ndarray:
 def get_weight(
     w: int, period: float, amplitude: float, show: bool = False
 ) -> np.ndarray:
-    """Generate periodic dinucleotide weights to model DNA bendability."""
+    """Generate periodic dinucleotide weights to model DNA bendability.
+
+    Creates position-dependent dinucleotide probability weights that capture
+    the ~10 bp periodic preference for A/T-rich dinucleotides where DNA bends
+    toward the histone octamer.
+
+    The model implements:
+    - AA, TA dinucleotides preferred where DNA bends inward (positive phase)
+    - GC dinucleotides anti-preferred at the same positions
+    - Periodic modulation with specified amplitude and period
+
+    Args:
+        w: Window size (typically 146 bp for nucleosomes).
+        period: Periodicity of DNA bending preference in bp (typically ~10 bp).
+        amplitude: Modulation amplitude (0-0.25, typically ~0.05).
+        show: If True, plot the dinucleotide weight patterns.
+
+    Returns:
+        4D array of shape (4, 4, w) with probability weights for each
+        dinucleotide at each position. Indices correspond to [base1, base2, position].
+
+    Example:
+        >>> weights = get_weight(146, period=10.0, amplitude=0.05)
+        >>> log_weights = np.log(weights)
+    """
     x = np.arange(w, dtype=np.int32) - w // 2
     s = amplitude * np.cos(2 * np.pi * x / period)
     weight = np.empty((4, 4, w), dtype=np.float64)
@@ -161,6 +286,35 @@ def get_weight(
 def calc_wrapping_energy(
     sequence: str, dyad: int, log_weights: np.ndarray, show: str | None = None
 ) -> WrappingEnergyResult:
+    """Calculate DNA wrapping energy for a nucleosome at a specific dyad position.
+
+    Computes the sequence-dependent wrapping energy by summing log-probability
+    weights for all dinucleotides in the wrapped DNA segment. The energy is
+    calculated symmetrically for both DNA strands (nucleosome has 2-fold symmetry).
+
+    The calculation also segments the energy into 14 contact regions between
+    DNA and histones for unwrapping thermodynamics analysis.
+
+    Args:
+        sequence: DNA sequence string.
+        dyad: Central dyad position (0-indexed).
+        log_weights: Log-probability weights from get_weight() [shape: 4,4,w].
+        show: If specified, show diagnostic plots (not implemented).
+
+    Returns:
+        WrappingEnergyResult with:
+            - octamer: Total energy for full nucleosome wrapping
+            - tetramer: Energy for central tetrasome region
+            - segments: Array of 14 segment energies for unwrapping analysis
+
+    Note:
+        Returns NaN values if dyad position is too close to sequence boundaries.
+
+    Example:
+        >>> weights = get_weight(146, period=10.0, amplitude=0.05)
+        >>> result = calc_wrapping_energy(sequence, dyad=500, np.log(weights))
+        >>> print(f"Wrapping energy: {result.octamer:.2f} kT")
+    """
     start = -len(log_weights[0, 0]) // 2
     end = start + len(log_weights[0, 0]) + 1
     if dyad + start < 0 or dyad + end - 1 >= len(sequence):
@@ -215,8 +369,37 @@ def calc_wrapping_energy(
 def compute_vanderlick(
     wrapping_energy: np.ndarray, show: bool = False
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Compute equilibrium dyad probability accounting for steric exclusion between nucleosomes."""
+    """Compute equilibrium dyad probability using Vanderlick statistical mechanics formalism.
 
+    Solves the statistical mechanical partition function for nucleosome positioning
+    with steric exclusion, accounting for the fact that nucleosomes cannot overlap
+    due to their 146 bp footprint. Uses forward-backward dynamic programming.
+
+    This implementation follows the Vanderlick formalism for hard-core interactions
+    on a lattice, providing the exact thermodynamic equilibrium distribution of
+    nucleosomes given the position-dependent wrapping energies.
+
+    Args:
+        wrapping_energy: Array of wrapping energies for each position (in kT units).
+        show: If True, plot the resulting dyad probabilities and occupancy.
+
+    Returns:
+        Tuple of (dyads, occupancy):
+            - dyads: Probability density of nucleosome dyad at each position
+            - occupancy: Total nucleosome occupancy (summed over 146 bp footprint)
+
+    Note:
+        Positions with NaN wrapping energy are excluded (probability set to 0).
+        Occupancy is clipped to [0, 1] to handle numerical precision issues.
+
+    Example:
+        >>> energy = fiber.calc_energy_landscape(amplitude=0.05, period=10.0)
+        >>> dyads, occupancy = compute_vanderlick(energy)
+        >>> plt.plot(occupancy)
+
+    Reference:
+        Adapted from Vanderlick et al. statistical mechanics of hard rods on a line.
+    """
     footprint = FOOTPRINT
     free_energy = wrapping_energy
     free_energy = np.nan_to_num(free_energy, nan=np.nanmax(free_energy))
@@ -271,7 +454,36 @@ def sample_unwrapping(
     e_contact: float = 1.0,
     steric_exclusion: int = 7,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Sample unwrapping states around a nucleosome dyad."""
+    """Sample unwrapping states around a nucleosome dyad using Boltzmann statistics.
+
+    Models nucleosome breathing and partial unwrapping by calculating the
+    thermodynamic equilibrium between 13 different unwrapping states (from -6 to +6
+    contact points released). Each state has an energy cost from lost DNA-histone
+    contacts and reduced wrapping energy.
+
+    The model includes:
+    - Sequential unwrapping from both ends
+    - Energy penalty per lost contact point (e_contact)
+    - Sequence-dependent wrapping energy changes
+    - Boltzmann probability distribution over states
+
+    Args:
+        sequence: DNA sequence string.
+        dyad: Nucleosome dyad position.
+        weight: Dinucleotide probability weights (not log).
+        e_contact: Energy per DNA-histone contact in kT units (default 1.0).
+        steric_exclusion: Not currently used (legacy parameter).
+
+    Returns:
+        Tuple of (states, occupancy):
+            - states: Integer array from -6 to +6 (number of contacts lost)
+            - occupancy: Position-dependent occupancy probability accounting for
+                        partial unwrapping
+
+    Example:
+        >>> weights = get_weight(146, period=10.0, amplitude=0.05)
+        >>> states, occ = sample_unwrapping(seq, dyad=500, weights, e_contact=-0.5)
+    """
 
     e_seg = calc_wrapping_energy(sequence, dyad, log_weights=np.log(weight)).segments
 
@@ -313,9 +525,33 @@ def sample_unwrapping(
 
 
 def fetch_chromosome_sequence(filename, chromosome="II"):
-    """Return the sequence for `chromosome` from a multi-record FASTA.
-    If the FASTA is missing and genomepy is available, attempt to download the sacCer3 genome into the
-    parent directory of `filename` (so filename should point to the expected .fa path).
+    """Fetch chromosome sequence from FASTA file with automatic genome download.
+
+    Loads a specific chromosome sequence from a multi-record FASTA file.
+    If the FASTA file doesn't exist, automatically downloads the sacCer3
+    (S. cerevisiae) genome using genomepy.
+
+    Args:
+        filename: Path to FASTA file (e.g., ".genomes/sacCer3/sacCer3.fa").
+        chromosome: Chromosome identifier (default "II"). Accepts:
+                   - Roman numerals: "I", "II", "III", etc.
+                   - Arabic numerals: "1", "2", "3", etc.
+                   - With prefix: "chr2", "chrII"
+                   - Case-insensitive
+
+    Returns:
+        Biopython Seq object containing the chromosome sequence.
+
+    Raises:
+        FileNotFoundError: If FASTA is empty.
+        ValueError: If chromosome not found in FASTA.
+
+    Example:
+        >>> seq = fetch_chromosome_sequence(".genomes/sacCer3/sacCer3.fa", "II")
+        >>> print(f"Chr II length: {len(seq)} bp")
+
+    Note:
+        Automatic download only works for sacCer3 genome.
     """
     filename = Path(filename)
 
@@ -384,15 +620,68 @@ def fetch_chromosome_sequence(filename, chromosome="II"):
 
 
 class ChromatinFiber:
-    """Simple container and utilities for a linear chromatin fiber.
+    """Complete framework for chromatin fiber simulation and analysis.
 
-    Responsibilities:
-    - store DNA sequence and dyad positions
-    - compute occupancy array for a given nucleosome footprint
-    - sample a single-molecule configuration by stochastic sampling of dyads
+    This class provides a comprehensive toolkit for modeling chromatin structure,
+    including DNA sequence-dependent nucleosome positioning, statistical mechanics
+    calculations, Monte Carlo sampling, and DNA methylation pattern simulation.
+
+    Key Features:
+        - Sequence-dependent energy landscape calculation
+        - Thermodynamic equilibrium positioning (Vanderlick formalism)
+        - Stochastic sampling of nucleosome configurations
+        - DNA methylation accessibility simulation
+        - ORF (gene) annotation integration
+        - Support for SnapGene .dna files
+
+    Attributes:
+        sequence (str): DNA sequence (uppercase).
+        index (np.ndarray): Genomic position indices for each base.
+        footprint (int): Nucleosome footprint size (default 146 bp).
+        weight (np.ndarray): Dinucleotide probability weights for wrapping energy.
+        energy (np.ndarray): Position-dependent wrapping energy landscape.
+        dyad_probability (np.ndarray): Equilibrium dyad positioning probability.
+        occupancy (np.ndarray): Nucleosome occupancy at each position.
+        dyads (np.ndarray): Sampled nucleosome dyad positions.
+        orfs (list): Annotated open reading frames/genes.
+        name (str): Optional identifier for the fiber.
+
+    Example:
+        >>> # Create fiber from sequence
+        >>> fiber = ChromatinFiber(sequence="ATCG"*1000, start=10000)
+        >>>
+        >>> # Calculate energy landscape
+        >>> fiber.calc_energy_landscape(amplitude=0.05, period=10.0,
+        ...                              chemical_potential=-2.0)
+        >>>
+        >>> # Sample configurations and simulate methylation
+        >>> dyads = fiber.sample_fiber_configuration()
+        >>> methylation = fiber.calc_methylation(dyads, efficiency=0.7)
+        >>>
+        >>> # Load from SnapGene file
+        >>> fiber2 = ChromatinFiber()
+        >>> fiber2.read_snapgene("plasmid.dna")
+
+    Methods:
+        calc_energy_landscape: Compute position-dependent wrapping energies.
+        sample_fiber_configuration: Monte Carlo sampling of nucleosome positions.
+        calc_methylation: Simulate DNA methylation with nucleosome protection.
+        read_snapgene: Load sequence from SnapGene .dna file.
+        fetch_orfs_by_range: Retrieve gene annotations from Ensembl.
+
+    See Also:
+        simulate_chromatin_fibers: Batch simulation with HDF5 output.
+        compute_vanderlick: Statistical mechanics solver.
     """
 
     def __init__(self, sequence=None, start=0) -> None:
+        """Initialize a chromatin fiber.
+
+        Args:
+            sequence: DNA sequence (str, Biopython Seq, or array-like).
+                     If None, must be loaded later via read_snapgene().
+            start: Starting genomic position (default 0).
+        """
         self.footprint: int = FOOTPRINT
         self.weight: np.ndarray | None = None
 
@@ -659,6 +948,39 @@ class ChromatinFiber:
         amplitude: float = 0.2,
         chemical_potential: float = -3.0,
     ) -> None:
+        """Calculate position-dependent nucleosome wrapping energy landscape.
+
+        Computes the sequence-dependent wrapping energy at every position
+        along the DNA sequence using periodic dinucleotide preferences.
+        Also calculates the thermodynamic equilibrium dyad probability and
+        nucleosome occupancy using the Vanderlick formalism.
+
+        Args:
+            octamer: If True, use full nucleosome wrapping energy; if False,
+                    use tetrasome energy (default True).
+            period: DNA helical repeat periodicity in bp (default 10.0).
+                   ~10 bp for B-form DNA.
+            amplitude: Strength of periodic dinucleotide preference (default 0.2).
+                      Range 0-0.25, typical values 0.05-0.2.
+            chemical_potential: Nucleosome binding free energy in kT units (default -3.0).
+                              Negative values favor nucleosome formation.
+
+        Effects:
+            Sets the following attributes:
+            - self.weight: Dinucleotide probability weights
+            - self.energy: Position-dependent wrapping energies
+            - self.dyad_probability: Equilibrium dyad probability distribution
+            - self.occupancy: Nucleosome occupancy at each position
+
+        Example:
+            >>> fiber.calc_energy_landscape(amplitude=0.05, period=10.0,
+            ...                              chemical_potential=-2.0)
+            >>> plt.plot(fiber.occupancy)
+
+        Note:
+            Chemical potential controls nucleosome density. More negative values
+            increase nucleosome occupancy. Typical range: -5 to 0 kT.
+        """
         self.weight = get_weight(
             FOOTPRINT, period=period, amplitude=amplitude, show=False
         )
@@ -688,9 +1010,33 @@ class ChromatinFiber:
         )
 
     def sample_fiber_configuration(self) -> np.ndarray:
-        """
-        Stochastically sample a single nucleosome arrangement to generate ensemble statistics.
-        Edge regions are excluded to prevent boundary artifacts from biasing occupancy.
+        """Stochastically sample nucleosome positions from equilibrium distribution.
+
+        Performs Monte Carlo sampling to generate a single-molecule realization
+        of nucleosome positions. The number of nucleosomes is Poisson-distributed
+        based on the equilibrium probability, and positions are sampled with
+        steric exclusion to prevent overlaps.
+
+        Returns:
+            Array of sampled nucleosome dyad positions in genomic coordinates.
+
+        Raises:
+            ValueError: If dyad_probability not calculated (call calc_energy_landscape first).
+
+        Process:
+            1. Sample number of nucleosomes from Poisson distribution
+            2. Iteratively sample positions from dyad probability
+            3. After each sampling, exclude nearby positions (steric exclusion)
+            4. Continue until all nucleosomes placed or no space remains
+
+        Example:
+            >>> fiber.calc_energy_landscape(amplitude=0.05, period=10.0)
+            >>> dyads = fiber.sample_fiber_configuration()
+            >>> print(f"Sampled {len(dyads)} nucleosomes")
+
+        Note:
+            Edge regions (±FOOTPRINT/2) excluded to prevent boundary artifacts.
+            Each call produces a different stochastic realization.
         """
         if self.dyad_probability is None:
             raise ValueError(
@@ -729,6 +1075,40 @@ class ChromatinFiber:
         efficiency: float = 0.85,
         steric_exclusion: int = 7,
     ) -> MethylationResult:
+        """Simulate DNA methylation with nucleosome protection and unwrapping.
+
+        Models DNA methylation accessibility experiments (e.g., NOMe-seq, ATAC-seq)
+        by simulating:
+        1. Reduced accessibility in nucleosome-wrapped regions
+        2. Partial unwrapping dynamics (breathing) using Boltzmann statistics
+        3. Stochastic methylation with specified efficiency
+        4. Motif-specific targeting (e.g., GpC dinucleotides)
+
+        Args:
+            dyads: Array of nucleosome dyad positions (in genomic coordinates).
+            e_contact: Energy per DNA-histone contact in kT units (default -1.0).
+                      More negative = more stable wrapping, less breathing.
+            motifs: List of DNA motifs to target for methylation (default ["A"]).
+                   For NOMe-seq: ["GC"]. Case-insensitive.
+            strand: Which strand to search: "both", "plus", or "minus" (default "both").
+            efficiency: Probability of methylation at accessible sites (0-1, default 0.85).
+            steric_exclusion: Number of contact points for exclusion calculation
+                            (legacy parameter, typically 7).
+
+        Returns:
+            MethylationResult containing:
+                - protected: Boolean array of nucleosome-protected positions
+                - methylated: Boolean array of successfully methylated positions
+
+        Example:
+            >>> dyads = fiber.sample_fiber_configuration()
+            >>> result = fiber.calc_methylation(dyads, motifs=["GC"], efficiency=0.7)
+            >>> footprints = convert_to_footprints([result.methylated], fiber.index)
+
+        Note:
+            Protection probability accounts for nucleosome unwrapping dynamics.
+            Positions can be protected but not methylated if efficiency < 1.
+        """
 
         if self.sequence is None:
             raise ValueError(
@@ -788,15 +1168,64 @@ class ChromatinFiber:
 
 
 def simulate_chromatin_fibers(params: SimulationParams, filename: str):
-    """Simulate many chromatin fibers.
+    """Run batch chromatin fiber simulation with HDF5 output.
 
-    Each sample is written to HDF5 immediately as it's generated:
-       - 'dyad_flat': concatenated dyad positions (int64)
-       - 'dyad_lengths': per-sample dyad array lengths (int64)
-       - 'encoded_flat': concatenated encoded sequences (int8)
-       - 'encoded_lengths': per-sample sequence lengths (int64)
-       - 'methylated_sequences': variable-length string dataset
-       - n_samples attribute: total number of samples in file
+    Generates multiple random DNA sequences, simulates nucleosome positioning
+    and methylation patterns for each, and incrementally saves results to
+    an HDF5 file for efficient storage and later analysis.
+
+    The simulation workflow for each fiber:
+        1. Generate random DNA sequence
+        2. Calculate energy landscape
+        3. Sample nucleosome configuration
+        4. Simulate methylation with protection
+        5. Write to HDF5 file
+
+    Args:
+        params: SimulationParams object containing all simulation parameters:
+            - n_samples: Number of fibers to simulate
+            - length_bp: DNA sequence length
+            - amplitude: Dinucleotide preference strength
+            - period_bp: DNA bending periodicity
+            - chemical_potential_kT: Nucleosome binding energy
+            - e_contact_kT: Contact energy for unwrapping
+            - motifs: Methylation target motifs
+            - strand: Strand specification
+            - efficiency: Methylation efficiency
+            - steric_exclusion_bp: Footprint exclusion size
+        filename: Output HDF5 filename (without extension).
+
+    Returns:
+        str: Path to created HDF5 file.
+
+    HDF5 Structure:
+        Datasets:
+            - dyad_flat: Concatenated dyad positions (int64)
+            - dyad_lengths: Length of dyad array per sample (int64)
+            - encoded_flat: Concatenated encoded sequences (int8)
+            - encoded_lengths: Length of sequence per sample (int64)
+            - methylated_sequences: Variable-length strings with methylation
+        Attributes:
+            - n_samples: Total number of simulated fibers
+            - Plus all SimulationParams as attributes
+
+    Example:
+        >>> params = SimulationParams(
+        ...     n_samples=1000,
+        ...     length_bp=10_000,
+        ...     amplitude=0.05,
+        ...     chemical_potential_kT=-2.0
+        ... )
+        >>> file = simulate_chromatin_fibers(params, "results/batch1")
+        >>> data = read_simulation_results(file)
+
+    Note:
+        Results are written incrementally to handle large datasets.
+        Progress shown via tqdm progress bar.
+
+    See Also:
+        read_simulation_results: Load and parse saved simulations.
+        SimulationParams: Parameter configuration dataclass.
     """
 
     h5_context = _H5Writer(filename, params)
@@ -942,24 +1371,49 @@ class _H5Writer:
 
 
 def read_simulation_results(filename: str, indices=None):
-    """Read data or parameters from HDF5 file.
+    """Load simulation results or parameters from HDF5 file.
 
-    Flexible function that returns different data based on the indices parameter:
-    - indices=None: returns SimulationParams (parameters used to generate the data)
-    - indices=int: returns single sample as tuple (dyad_positions, encoded_sequence, methylated_sequence)
-    - indices=list/array: returns batch as tuple of lists ([dyad_positions], [encoded_sequences], [methylated_sequences])
+    Flexible reader that returns different data based on the indices parameter.
+    Can retrieve simulation parameters, individual samples, or batches of samples.
 
     Args:
-        filename: path to HDF5 file (with or without .h5 extension)
-        indices: None for params, int for single sample, list/array for batch
+        filename: Path to HDF5 file (with or without .h5 extension).
+        indices: What to retrieve:
+            - None: Return SimulationParams (metadata only)
+            - int: Return single sample at that index
+            - list/array: Return batch of samples at those indices
 
     Returns:
-        SimulationParams, tuple (single sample), or tuple of lists (batch)
+        Depends on indices parameter:
+        - None → SimulationParams object
+        - int → Tuple (dyad_positions, encoded_sequence, methylated_sequence)
+        - list → Tuple of lists ([dyads], [encoded_seqs], [methylated_seqs])
+
+    Raises:
+        IndexError: If requested index out of range.
+        FileNotFoundError: If HDF5 file doesn't exist.
 
     Examples:
-        >>> params = read_h5("data.h5")  # Get parameters
-        >>> dyads, encoded, meth = read_h5("data.h5", 0)  # Get first sample
-        >>> dyads_list, enc_list, meth_list = read_h5("data.h5", [0, 5, 10])  # Get batch
+        >>> # Get simulation parameters
+        >>> params = read_simulation_results("data/batch1.h5")
+        >>> print(f"Simulated {params.n_samples} fibers")
+
+        >>> # Get single sample
+        >>> dyads, encoded, methylated = read_simulation_results("data/batch1.h5", 0)
+        >>> print(f"Sample has {len(dyads)} nucleosomes")
+
+        >>> # Get batch of samples
+        >>> batch = read_simulation_results("data/batch1.h5", [0, 5, 10])
+        >>> dyads_list, encoded_list, meth_list = batch
+        >>> print(f"Loaded {len(dyads_list)} samples")
+
+    Note:
+        Encoded sequences use numeric encoding: A=0, C=1, G=2, T=3.
+        Methylated sequences are strings with uppercase=unmethylated, lowercase=methylated.
+
+    See Also:
+        simulate_chromatin_fibers: Generate simulations.
+        ChromatinFiber.decode_sequence: Convert encoded sequences back to strings.
     """
     filename = Path(filename).with_suffix(".h5")
 
@@ -1132,17 +1586,6 @@ if __name__ == "__main__":
 
     methylation = fiber.calc_methylation(dyads, steric_exclusion=10)
 
-    # plotter = SequencePlotter()
-    # plotter.plot(
-    #     fiber,
-    #     occupancy=methylation.protected,
-    #     energy=False,
-
-    #     methylation=methylation.methylated,
-    #     dyads=dyads,
-    # )
-    # plt.show()
-
     # Test incremental HDF5 writing
     params = SimulationParams(n_samples=3, length_bp=500)
     x, y, z = simulate_chromatin_fibers(params, filename="test_incremental.h5")
@@ -1153,12 +1596,3 @@ if __name__ == "__main__":
     # Test appending more samples
     params2 = SimulationParams(n_samples=2, length_bp=500)
     simulate_chromatin_fibers(params2, filename="test_incremental.h5")
-
-    # Test reading back data and parameters
-    dyads, encoded, methylated = read_h5_sample("test_incremental.h5", 0)
-    ic(dyads)
-    ic(encoded)
-
-    # Read simulation parameters
-    saved_params = read_h5_params("test_incremental.h5")
-    ic(saved_params)
