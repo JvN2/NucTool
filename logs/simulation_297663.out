@@ -1,0 +1,30 @@
+Job started at Thu Nov 20 18:20:02 CET 2025
+Running on node: node885
+Working directory: /home/noortsjtvan/VSC/NucTool
+
+Chromatin Fiber Simulation
+============================================================
+Project root: /zfsstore/user/noortsjtvan/VSC/NucTool
+Output file:  /zfsstore/user/noortsjtvan/VSC/NucTool/data/LLM models/test_5000.h5
+Samples requested: 5000
+
+Generating 5000 new samples...
+Save fibers in HDF5 file: /zfsstore/user/noortsjtvan/VSC/NucTool/data/LLM models/test_5000.h5
+
+✓ Simulation complete!
+Final parameters:
+  n_samples: 5000
+  length_bp: 10000
+  amplitude: 0.05
+  period_bp: 10.0
+  chemical_potential_kT: 0.0
+  e_contact_kT: -0.5
+  motifs: ['A']
+  strand: both
+  efficiency: 0.7
+  steric_exclusion_bp: 0
+
+Output saved to: /zfsstore/user/noortsjtvan/VSC/NucTool/data/LLM models/test_5000.h5
+File size: 74.1 MB
+
+Job finished at Thu Nov 20 19:36:46 CET 2025

@@ -53,7 +53,7 @@ from tqdm import tqdm
 import genomepy
 import h5py
 from pathlib import Path
-from Plotter import Plotter, FIGSIZE
+from .Plotter import Plotter, FIGSIZE
 
 
 FOOTPRINT = 146  # Nucleosome DNA footprint size in base pairs

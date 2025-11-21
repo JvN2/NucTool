@@ -27,16 +27,16 @@
         "scheduler": "ReduceLROnPlateau"
     },
     "test_metrics": {
-        "n_train_samples": 10500,
-        "n_test_samples": 2250,
-        "n_val_samples": 2250,
-        "n_test_positions": 22500000,
+        "n_train_samples": 35,
+        "n_test_samples": 8,
+        "n_val_samples": 7,
+        "n_test_positions": 80000,
         "threshold": 0.3,
-        "test_loss": 0.15526708393869265,
-        "accuracy": 0.9460384888888889,
-        "precision": 0.08644925647280766,
-        "recall": 0.9866040720869446,
-        "f1_score": 0.15896915128987701,
-        "roc_auc": 0.9903866582547203
+        "test_loss": 0.15588019788265228,
+        "accuracy": 0.947,
+        "precision": 0.08454054054054054,
+        "recall": 0.9848866498740554,
+        "f1_score": 0.15571485463958581,
+        "roc_auc": 0.9899414889208857
     }
 }
