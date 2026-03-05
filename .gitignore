@@ -41,3 +41,14 @@ figures
 
 # Large data files
 data/LLM models/*.h5
+notebooks/.genomes/sacCer3/sacCer3.fa.fai
+notebooks/.genomes/sacCer3/sacCer3.fa
+notebooks/.genomes/sacCer3/sacCer3.fa.sizes
+notebooks/.genomes/sacCer3/sacCer3.gaps.bed
+tests/.genomes/sacCer3/sacCer3.fa
+tests/.genomes/sacCer3/sacCer3.fa.fai
+tests/.genomes/sacCer3/sacCer3.fa.sizes
+tests/.genomes/sacCer3/sacCer3.gaps.bed
+test_incremental.h5
+notebooks/.genomes/sacCer3/assembly_report.txt
+tests/.genomes/sacCer3/assembly_report.txt

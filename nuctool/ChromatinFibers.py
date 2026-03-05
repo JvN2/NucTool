@@ -53,7 +53,7 @@ from tqdm import tqdm
 import genomepy
 import h5py
 from pathlib import Path
-from .Plotter import Plotter, FIGSIZE
+from Plotter import Plotter, FIGSIZE
 
 
 FOOTPRINT = 146  # Nucleosome DNA footprint size in base pairs
@@ -248,11 +248,13 @@ def get_weight(
             ax = axes[idx]
             label2 = ""
             base2 = "A"
-            w1 = weight[*encode_seq(base1 + base2)]
+            i1, i2 = encode_seq(base1 + base2)
+            w1 = weight[i1, i2]
             w2 = -np.ones_like(w1)
             label1 = base1 + base2
             for base2 in "CGT":
-                width = weight[*encode_seq(base1 + base2)]
+                i1, i2 = encode_seq(base1 + base2)
+                width = weight[i1, i2]
                 if np.array_equal(width, w1):
                     label1 += ", " + base1 + base2
                 else:
