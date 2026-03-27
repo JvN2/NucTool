@@ -760,8 +760,8 @@ class ChromatinFiber:
             End position (1-based)
         """
         chrom = str(chromosome).lower().strip()
-        chrom = s.lstrip("chr").lstrip("chromosome").strip(" _-")
-        chrom = s.upper()
+        chrom = chrom.lstrip("chr").lstrip("chromosome").strip(" _-")
+        chrom = chrom.upper()
 
         Entrez.email = "your.email@example.com"
         q = f"{chrom}[Chromosome] AND {organism}[Organism] AND {start}:{end}[CHRPOS]"
