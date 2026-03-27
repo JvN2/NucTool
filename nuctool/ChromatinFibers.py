@@ -759,12 +759,16 @@ class ChromatinFiber:
         end : int
             End position (1-based)
         """
+        chrom = str(chromosome).lower().strip()
+        chrom = s.lstrip("chr").lstrip("chromosome").strip(" _-")
+        chrom = s.upper()
+
         Entrez.email = "your.email@example.com"
-        q = f"{chromosome}[Chromosome] AND {organism}[Organism] AND {start}:{end}[CHRPOS]"
+        q = f"{chrom}[Chromosome] AND {organism}[Organism] AND {start}:{end}[CHRPOS]"
         res = Entrez.read(Entrez.esearch(db="gene", term=q))
         if not res.get("IdList"):
             raise ValueError(
-                f"No ORFs found for chromosome {chromosome} in range {start}:{end}"
+                f"No ORFs found for chromosome {chrom} in range {start}:{end}"
             )
 
         # Loop through all gene IDs to get ORFs on both strands
