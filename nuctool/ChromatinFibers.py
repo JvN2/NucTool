@@ -317,54 +317,46 @@ def calc_wrapping_energy(
         >>> result = calc_wrapping_energy(sequence, dyad=500, np.log(weights))
         >>> print(f"Wrapping energy: {result.octamer:.2f} kT")
     """
-    start = -len(log_weights[0, 0]) // 2
-    end = start + len(log_weights[0, 0]) + 1
+    w = log_weights.shape[2]
+    start = -(w // 2)
+    end = start + w + 1
+
     if dyad + start < 0 or dyad + end - 1 >= len(sequence):
         return WrappingEnergyResult(
             octamer=np.nan, tetramer=np.nan, segments=np.full(14, np.nan)
         )
 
-    # Extract and encode sequence segment
     seq_segment = sequence[dyad + start : dyad + end - 1]
     idx = encode_seq(seq_segment.upper())
 
-    # sum log-weights for both orientations as nucleosome is symmetric
     n = len(idx) - 1
     indices = np.arange(n)
-    forward = log_weights[idx[:-1], idx[1:], indices] + np.log(4.0)
+    log4 = np.log(4.0)
+
+    forward = log_weights[idx[:-1], idx[1:], indices] + log4
     forward = np.append(forward, np.nan)
     idx_rev = idx[::-1]
-    reverse = log_weights[idx_rev[:-1], idx_rev[1:], indices] + np.log(4.0)
+    reverse = log_weights[idx_rev[:-1], idx_rev[1:], indices] + log4
     reverse = np.append(reverse, np.nan)[::-1]
     energy = forward + reverse
 
-    # add up energies of segments between contact points
-    # make sure that segment boundaries are included for unwrapping from the outside of the octamers
-    contacts = np.arange(-7, 7).astype(np.int16) * 10 + 5
-    x_positions = np.arange(start, end - 1).astype(np.float64)
+    x_positions = np.arange(start, end - 1, dtype=np.float64)
 
-    tetramer = np.where((x_positions > -36) & (x_positions < 36))
-    octamer = np.where((x_positions > -66) & (x_positions < 66))
+    # segment energies via digitize — single pass instead of 14 boolean masks
+    contacts = np.arange(-7, 7, dtype=np.int16) * 10 + 5
+    bins = np.digitize(x_positions, contacts)  # bin index per position
+    # positions in bin 0 are left of all contacts, bin 14 right of all — both ignored
+    wrapping_energy = np.array([
+        np.nansum(energy[bins == i]) for i in range(1, 15)
+    ])
 
-    wrapping_energy = np.asarray(
-        [
-            np.sum(
-                energy[(x_positions >= contacts[i]) & (x_positions < contacts[i + 1])]
-            )
-            for i in range(0, 6)
-        ]
-        + [np.sum(energy[(x_positions >= contacts[6]) & (x_positions <= contacts[7])])]
-        + [
-            np.sum(
-                energy[(x_positions > contacts[i]) & (x_positions <= contacts[i + 1])]
-            )
-            for i in range(7, 13)
-        ]
-    )
-    octamer_energy = np.sum(energy[octamer])
-    tetramer_energy = np.sum(energy[tetramer])
+    tetramer_mask = (x_positions > -36) & (x_positions < 36)
+    octamer_mask  = (x_positions > -66) & (x_positions < 66)
+
     return WrappingEnergyResult(
-        octamer=octamer_energy, tetramer=tetramer_energy, segments=wrapping_energy
+        octamer=np.nansum(energy[octamer_mask]),
+        tetramer=np.nansum(energy[tetramer_mask]),
+        segments=wrapping_energy,
     )
 
 
@@ -764,11 +756,11 @@ class ChromatinFiber:
         chrom = chrom.upper()
 
         Entrez.email = "your.email@example.com"
-        q = f"{chrom}[Chromosome] AND {organism}[Organism] AND {start}:{end}[CHRPOS]"
+        q = f"{chromosome}[Chromosome] AND {organism}[Organism] AND {start}:{end}[CHRPOS]"
         res = Entrez.read(Entrez.esearch(db="gene", term=q))
         if not res.get("IdList"):
             raise ValueError(
-                f"No ORFs found for chromosome {chrom} in range {start}:{end}"
+                f"No ORFs found for chromosome {chromosome} in range {start}:{end}"
             )
 
         # Loop through all gene IDs to get ORFs on both strands
@@ -987,33 +979,47 @@ class ChromatinFiber:
             Chemical potential controls nucleosome density. More negative values
             increase nucleosome occupancy. Typical range: -5 to 0 kT.
         """
-        self.weight = get_weight(
-            FOOTPRINT, period=period, amplitude=amplitude, show=False
-        )
+        self.weight = get_weight(FOOTPRINT, period=period, amplitude=amplitude, show=False)
+        log_weights = np.log(self.weight)  # shape (4, 4, w)
+
+        w = log_weights.shape[2]
+        half = w // 2
+        L = len(self.sequence)
+
+        # Encode full sequence once
+        idx = encode_seq(self.sequence)  # shape (L,)
+
+        # Sliding windows of indices: shape (L - w + 1, w)
+        windows = np.lib.stride_tricks.sliding_window_view(idx, w)
+        num_dyads = windows.shape[0]
+
+        positions = np.arange(w - 1)  # shape (w-1,)
+
+        # Forward and reverse log-weight lookups: shape (num_dyads, w-1)
+        log4 = np.log(4.0)
+        forward = log_weights[windows[:, :-1], windows[:, 1:], positions] + log4
+        rev_windows = windows[:, ::-1]
+        reverse = log_weights[rev_windows[:, :-1], rev_windows[:, 1:], positions] + log4
+
+        # Per-dinucleotide energy at each dyad: shape (num_dyads, w-1)
+        energy = forward + reverse  # shape (num_dyads, w-1)
+
+        # Mask to octamer or tetramer region
+        x_positions = np.arange(w - 1, dtype=np.float64) - half        
         if octamer:
-            self.energy = np.asarray(
-                [
-                    calc_wrapping_energy(
-                        self.sequence, i, log_weights=np.log(self.weight)
-                    ).octamer
-                    for i in range(len(self.sequence))
-                ]
-            )
+            region_mask = (x_positions > -66) & (x_positions < 66)
         else:
-            self.energy = np.asarray(
-                [
-                    calc_wrapping_energy(
-                        self.sequence, i, log_weights=np.log(self.weight)
-                    ).tetramer
-                    for i in range(len(self.sequence))
-                ]
-            )
+            region_mask = (x_positions > -36) & (x_positions < 36)
+
+        # Sum over masked positions for each dyad: shape (num_dyads,)
+        dyad_energy = energy[:, region_mask].sum(axis=1)
+
+        # Place results into full-length array, nan-padding edges
+        self.energy = np.full(L, np.nan)
+        self.energy[half : half + num_dyads] = dyad_energy
 
         self.energy += chemical_potential
-
-        self.dyad_probability, self.occupancy = compute_vanderlick(
-            self.energy, show=False
-        )
+        self.dyad_probability, self.occupancy = compute_vanderlick(self.energy, show=False)
 
     def sample_fiber_configuration(self) -> np.ndarray:
         """Stochastically sample nucleosome positions from equilibrium distribution.
