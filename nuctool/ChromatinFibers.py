@@ -126,6 +126,7 @@ class SimulationParams:
     strand: str = "both"
     efficiency: float = 0.7
     steric_exclusion_bp: int = 0
+    padding_bp: int = 0
 
 
 def convert_to_footprints(methylated, index, minimal_footprint=10):
@@ -447,6 +448,7 @@ def sample_unwrapping(
     weight: np.ndarray,
     e_contact: float = 1.0,
     steric_exclusion: int = 7,
+    segments: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Sample unwrapping states around a nucleosome dyad using Boltzmann statistics.
 
@@ -479,7 +481,10 @@ def sample_unwrapping(
         >>> states, occ = sample_unwrapping(seq, dyad=500, weights, e_contact=-0.5)
     """
 
-    e_seg = calc_wrapping_energy(sequence, dyad, log_weights=np.log(weight)).segments
+    if segments is not None:
+        e_seg = segments
+    else:
+        e_seg = calc_wrapping_energy(sequence, dyad, log_weights=np.log(weight)).segments
 
     states = np.arange(13).astype(int) - 6
     e = np.concatenate(
@@ -677,8 +682,7 @@ class ChromatinFiber:
             start: Starting genomic position (default 0).
         """
         self.footprint: int = FOOTPRINT
-        self.weight: np.ndarray | None = None
-
+        self.weight: np.ndarray | None = None    
         self.name: str | None = None
         if sequence is not None:
             # Accept Biopython Seq, Python str, numpy array, or similar.
@@ -694,6 +698,7 @@ class ChromatinFiber:
         self.energy: np.ndarray | None = None
         self.dyad_probability: np.ndarray | None = None
         self.occupancy: np.ndarray | None = None
+        self.segments: np.ndarray | None = None  # shape (L, 14), cached per-position unwrapping segments
 
         self.dyads: np.ndarray = np.array([], dtype=int)
 
@@ -969,34 +974,25 @@ class ChromatinFiber:
             - self.energy: Position-dependent wrapping energies
             - self.dyad_probability: Equilibrium dyad probability distribution
             - self.occupancy: Nucleosome occupancy at each position
-
-        Example:
-            >>> fiber.calc_energy_landscape(amplitude=0.05, period=10.0,
-            ...                              chemical_potential=-2.0)
-            >>> plt.plot(fiber.occupancy)
-
-        Note:
-            Chemical potential controls nucleosome density. More negative values
-            increase nucleosome occupancy. Typical range: -5 to 0 kT.
+            - self.nfr_positions: Boolean mask of NFR positions (if mask_nfr=True)
         """
         self.weight = get_weight(FOOTPRINT, period=period, amplitude=amplitude, show=False)
-        log_weights = np.log(self.weight)  # shape (4, 4, w)
+        log_weights = np.log(self.weight)   # shape (4, 4, w)
 
         w = log_weights.shape[2]
         half = w // 2
         L = len(self.sequence)
 
-        # Encode full sequence once
-        idx = encode_seq(self.sequence)  # shape (L,)
+        idx = encode_seq(self.sequence)
 
         # Sliding windows of indices: shape (L - w + 1, w)
         windows = np.lib.stride_tricks.sliding_window_view(idx, w)
         num_dyads = windows.shape[0]
 
-        positions = np.arange(w - 1)  # shape (w-1,)
-
-        # Forward and reverse log-weight lookups: shape (num_dyads, w-1)
+        positions = np.arange(w - 1)
         log4 = np.log(4.0)
+
+         # Forward and reverse log-weight lookups: shape (num_dyads, w-1)
         forward = log_weights[windows[:, :-1], windows[:, 1:], positions] + log4
         rev_windows = windows[:, ::-1]
         reverse = log_weights[rev_windows[:, :-1], rev_windows[:, 1:], positions] + log4
@@ -1005,7 +1001,7 @@ class ChromatinFiber:
         energy = forward + reverse  # shape (num_dyads, w-1)
 
         # Mask to octamer or tetramer region
-        x_positions = np.arange(w - 1, dtype=np.float64) - half        
+        x_positions = np.arange(w - 1, dtype=np.float64) - half
         if octamer:
             region_mask = (x_positions > -66) & (x_positions < 66)
         else:
@@ -1020,6 +1016,17 @@ class ChromatinFiber:
 
         self.energy += chemical_potential
         self.dyad_probability, self.occupancy = compute_vanderlick(self.energy, show=False)
+
+        # Cache per-position unwrapping segment energies (shape L x 14) so
+        # sample_unwrapping can skip recomputing calc_wrapping_energy per dyad.
+        contacts = np.arange(-7, 7, dtype=np.int16) * 10 + 5
+        bins = np.digitize(x_positions, contacts)  # shape (w-1,)
+        segments_all = np.zeros((num_dyads, 14))
+        for i in range(1, 15):
+            col = bins == i
+            segments_all[:, i - 1] = energy[:, col].sum(axis=1)
+        self.segments = np.full((L, 14), np.nan)
+        self.segments[half : half + num_dyads] = segments_all
 
     def sample_fiber_configuration(self) -> np.ndarray:
         """Stochastically sample nucleosome positions from equilibrium distribution.
@@ -1045,8 +1052,7 @@ class ChromatinFiber:
             >>> fiber.calc_energy_landscape(amplitude=0.05, period=10.0)
             >>> dyads = fiber.sample_fiber_configuration()
             >>> print(f"Sampled {len(dyads)} nucleosomes")
-
-        Note:
+           Note:
             Edge regions (±FOOTPRINT/2) excluded to prevent boundary artifacts.
             Each call produces a different stochastic realization.
         """
@@ -1146,14 +1152,19 @@ class ChromatinFiber:
 
         protected = np.zeros(len(self.sequence)).astype(np.float64)
         for dyad in dyads:
+            local = dyad - self.index[0]
+            segs = self.segments[local] if self.segments is not None else None
             x, occupancy = sample_unwrapping(
                 self.sequence,
-                dyad - self.index[0],
+                local,
                 self.weight,
                 e_contact=e_contact,
                 steric_exclusion=steric_exclusion,
+                segments=segs,
             )
-            protected[x + dyad - self.index[0] - 1] += occupancy
+            idx = x + local - 1
+            mask = (idx >= 0) & (idx < len(protected))
+            protected[idx[mask]] += occupancy[mask]
 
         protected = np.clip(protected, 0, 1)
         p_methylated = (1 - protected) * methylation_targets * efficiency
@@ -1244,7 +1255,8 @@ def simulate_chromatin_fibers(params: SimulationParams, filename: str):
 
     print("Save fibers in HDF5 file:", h5_context.filename)
     for i in tqdm(range(params.n_samples), desc="Simulating fibers"):
-        sequence = "".join(np.random.choice(list("ACGT"), size=params.length_bp))
+        padded_length = params.length_bp + 2 * params.padding_bp
+        sequence = "".join(np.random.choice(list("ACGT"), size=padded_length))
         fiber = ChromatinFiber(sequence=sequence)
         fiber.calc_energy_landscape(
             octamer=True,
@@ -1266,6 +1278,14 @@ def simulate_chromatin_fibers(params: SimulationParams, filename: str):
 
         methylated_seq = fiber.encode_methylations(methylation.methylated)
         encoded_seq = encode_seq(methylated_seq)
+
+        # Crop padding: keep only the inner region, shift dyad coordinates accordingly
+        p = params.padding_bp
+        if p > 0:
+            encoded_seq = encoded_seq[p : p + params.length_bp]
+            methylated_seq = methylated_seq[p : p + params.length_bp]
+            inner_mask = (dyads >= p) & (dyads < p + params.length_bp)
+            dyads = dyads[inner_mask] - p
 
         h5_context.write_sample(dyads, encoded_seq, methylated_seq)
 
@@ -1307,6 +1327,7 @@ class _H5Writer:
             self.f.attrs["strand"] = params.strand
             self.f.attrs["efficiency"] = params.efficiency
             self.f.attrs["steric_exclusion_bp"] = params.steric_exclusion_bp
+            self.f.attrs["padding_bp"] = params.padding_bp
             self.f.create_dataset(
                 "dyad_flat",
                 shape=(0,),
@@ -1448,6 +1469,7 @@ def read_simulation_results(filename: str, indices=None):
                 strand=str(f.attrs.get("strand", "both")),
                 efficiency=float(f.attrs.get("efficiency", 0.7)),
                 steric_exclusion_bp=int(f.attrs.get("steric_exclusion_bp", 0)),
+                padding_bp=int(f.attrs.get("padding_bp", 0)),
             )
 
         n_samples = int(f.attrs["n_samples"])

@@ -111,6 +111,10 @@ class Plotter:
         fig_num=None,
         sharex=False,
         sharey=False,
+        width_ratios=None,
+        height_ratios=None,
+        wspace=None,
+        hspace=None,
         **kwargs,
     ):
         """
@@ -157,6 +161,20 @@ class Plotter:
         if nrows is not None or ncols is not None:
             nrows = nrows or 1
             ncols = ncols or 1
+
+            # Build gridspec_kw from explicit parameters + any passed via kwargs
+            gskw = kwargs.pop('gridspec_kw', {})
+            if width_ratios is not None:
+                gskw['width_ratios'] = width_ratios
+            if height_ratios is not None:
+                gskw['height_ratios'] = height_ratios
+            if wspace is not None:
+                gskw['wspace'] = wspace
+                constrained_layout = False  # wspace is ignored with constrained_layout
+            if hspace is not None:
+                gskw['hspace'] = hspace
+                constrained_layout = False
+
             self.fig, self.axes = plt.subplots(
                 nrows=nrows,
                 ncols=ncols,
@@ -164,6 +182,7 @@ class Plotter:
                 constrained_layout=constrained_layout,
                 sharex=sharex,
                 sharey=sharey,
+                gridspec_kw=gskw if gskw else None,
                 **kwargs,
             )
         else:

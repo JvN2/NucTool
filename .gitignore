@@ -3,6 +3,13 @@ venv/
 env/
 ENV/
 .venv/
+genomics/
+
+# Large model/data files
+notebooks/data/LLM models/*.h5
+notebooks/data/LLM models/Tests/
+nuctool/methylation_occupancy/
+notebooks/data/Model\ Predictions/
 
 # Python cache files
 __pycache__/

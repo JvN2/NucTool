@@ -9,7 +9,10 @@ genome url: https://hgdownload.soe.ucsc.edu/goldenPath/sacCer3/bigZips/chromFa.t
 annotation url: na
 sanitized annotation: na
 genomepy version: 0.16.3
-date: 2026-02-12 12:45:33
+date: 2026-05-22 15:02:33
+regex: 'alt' (inverted match)
+
+No contigs were removed.
 
 regex: 'alt' (inverted match)
 
