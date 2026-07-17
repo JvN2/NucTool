@@ -28514,3 +28514,8 @@ nuctool/.genomes/sacCer3/sacCer3.fa.fai
 nuctool/.genomes/sacCer3/sacCer3.fa.sizes
 nuctool/.genomes/sacCer3/sacCer3.gaps.bed
 tests/.genomes/sacCer3/README.txt
+
+# Large training/simulation data
+notebooks/data/LLM models/LLM_tests/
+nuctool/full_methylation_data_10000bp_interval/
+nuctool/full_methylation_data_10000bp_interval_meth_filtered/
