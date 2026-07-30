@@ -538,7 +538,10 @@ def plot_sequence(
         plt.plot(fiber.index, methylation, "o", color="green", markersize=2, alpha=0.5)
 
 
-def plot_footprints(panel, footprints, index, n_max=None):
+def plot_footprints(panel, footprints, index, n_max=None, sort_by_methylation=False,
+                    ylabel="Molecule", show_yaxis=True,
+                    cbar_label="Footprint (bp)", cbar_ticks=(20, 50, 100, 132, 200),
+                    cbar_range=(20, 250)):
     def create_cmap(crange=(0, 250)):
         colors = [
             (0, "white"),
@@ -576,13 +579,22 @@ def plot_footprints(panel, footprints, index, n_max=None):
     if n_max is not None and len(ids) > n_max:
         ids = ids[np.random.choice(len(ids), n_max, replace=False)]
 
+    if sort_by_methylation:
+        # Methylation amount per read ≈ number of footprints (each footprint edge
+        # marks a methylated position). Reads are ordered least→most methylated
+        # from the bottom to the top of the plot.
+        meth_per_read = (
+            footprints[footprints["read_id"].isin(ids)].groupby("read_id").size()
+        )
+        ids = meth_per_read.reindex(ids).sort_values(kind="stable").index.to_numpy()
+
     xlim = (index[0], index[-1])
 
     plt.hlines(ids, color="lightgrey", *xlim, zorder=1)
     norm = Normalize(0, 250)
     sm = ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
-    crange = (-10, 250)
+    crange = (cbar_range[0], 250)   # clip footprint widths to the colorbar minimum
 
     for i, id in tqdm(enumerate(ids), desc="Plotting footprints"):
         for _, row in footprints[footprints["read_id"] == id].iterrows():
@@ -597,18 +609,26 @@ def plot_footprints(panel, footprints, index, n_max=None):
 
     panel.set_xlim(xlim)
     panel.set_ylim(-0.5, len(ids) + 0.5)
-
-    panel.set_yticks([])
-    plt.box(False)
-    plt.gca().spines["left"].set_visible(False)
     panel.set_xlabel("i (bp)")
+
+    if show_yaxis:
+        # Labelled molecule axis (matplotlib auto-places rounded ticks: 0, 20, 40, ...)
+        panel.set_ylabel(ylabel)
+        panel.spines["top"].set_visible(False)
+        panel.spines["right"].set_visible(False)
+    else:
+        panel.set_yticks([])
+        plt.box(False)
+        panel.spines["left"].set_visible(False)
 
     norm = mcolors.Normalize(vmin=0, vmax=250)
     sm = ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
-    plt.colorbar(sm, ax=ax, ticks=np.linspace(0, 250, 6))
-    # plt.gcf().set_size_inches(14.5, 3)
-    # plt.tight_layout()
+    cbar = plt.colorbar(sm, ax=ax, ticks=list(cbar_ticks))
+    # Crop the visible colorbar to [cbar_range] without remapping colours, so the
+    # Sterachis stops (magenta≈30, lime=132) stay aligned to their bp values.
+    cbar.ax.set_ylim(*cbar_range)
+    if cbar_label:
+        cbar.set_label(cbar_label)
 
-    # plt.show()
     return

@@ -1,0 +1,32 @@
+# Requirements for notebooks/Apply_RealData.ipynb
+#
+# Install:   pip install -r Apply_RealData_requirement.txt
+# Run from:  the notebooks/ directory (relative paths + sys.path depend on it)
+# Python:    3.12 (the "genomics" virtualenv in this repo)
+#
+# Versions below are pinned to what this repo was verified against; loosen with
+# >= if you need flexibility. numpy 2.x is fine (the notebook handles the
+# np.trapz -> np.trapezoid rename).
+
+numpy==2.4.3
+torch==2.10.0
+matplotlib==3.10.8
+scipy==1.17.1
+tqdm==4.67.3
+
+# --- Standard library (no install needed): json, os, sys, pathlib ---
+#
+# --- Local modules (already in this repo, auto-added to sys.path) ---
+#   nuctool/Plotter.py         (imported as: from nuctool.Plotter import Plotter)
+#   nuctool/ChromatinFibers.py (dependency of Plotter)
+#
+# --- Model files (must live together in notebooks/data/LLM models/LLM_tests/) ---
+#   test_2_15000_fitted_variables.pt    (weights)
+#   test_2_15000_fitted_variables.json  (architecture config; loaded via .with_suffix)
+#
+# --- Data files (in nuctool/methylation_occupancy/) ---
+#   encoded_reads_chrII_273000_283000.npy
+#   coverage_chrII_273000_283000.npy
+#   occupancy_locus(chrII:273000-283000).npy
+#
+# GPU is optional (falls back to CPU). Run cells top-to-bottom.
