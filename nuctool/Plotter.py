@@ -541,7 +541,7 @@ def plot_sequence(
 def plot_footprints(panel, footprints, index, n_max=None, sort_by_methylation=False,
                     ylabel="Molecule", show_yaxis=True,
                     cbar_label="Footprint (bp)", cbar_ticks=(20, 50, 100, 132, 200),
-                    cbar_range=(20, 250)):
+                    cbar_range=(20, 250), cbar_ax=None):
     def create_cmap(crange=(0, 250)):
         colors = [
             (0, "white"),
@@ -590,7 +590,7 @@ def plot_footprints(panel, footprints, index, n_max=None, sort_by_methylation=Fa
 
     xlim = (index[0], index[-1])
 
-    plt.hlines(ids, color="lightgrey", *xlim, zorder=1)
+    panel.hlines(ids, color="lightgrey", *xlim, zorder=1)
     norm = Normalize(0, 250)
     sm = ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
@@ -618,13 +618,16 @@ def plot_footprints(panel, footprints, index, n_max=None, sort_by_methylation=Fa
         panel.spines["right"].set_visible(False)
     else:
         panel.set_yticks([])
-        plt.box(False)
+        panel.set_frame_on(False)
         panel.spines["left"].set_visible(False)
 
     norm = mcolors.Normalize(vmin=0, vmax=250)
     sm = ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
-    cbar = plt.colorbar(sm, ax=ax, ticks=list(cbar_ticks))
+    if cbar_ax is not None:
+        cbar = plt.colorbar(sm, cax=cbar_ax, ticks=list(cbar_ticks))
+    else:
+        cbar = plt.colorbar(sm, ax=ax, ticks=list(cbar_ticks))
     # Crop the visible colorbar to [cbar_range] without remapping colours, so the
     # Sterachis stops (magenta≈30, lime=132) stay aligned to their bp values.
     cbar.ax.set_ylim(*cbar_range)
